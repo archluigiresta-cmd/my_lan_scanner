@@ -7,7 +7,7 @@ import {
 } from './types';
 import TopologyMap from './components/TopologyMap';
 import ContextMenu from './components/ContextMenu';
-import { generateSampleNetwork, analyzeNetwork, traceWanPath, setSessionApiKey } from './services/geminiService';
+import { generateSampleNetwork, analyzeNetwork, traceWanPath, setSessionApiKey, parseImportedData } from './services/geminiService';
 import { 
   LayoutDashboard, 
   Network, 
@@ -20,7 +20,10 @@ import {
   Printer,
   Laptop,
   AlertTriangle,
-  Key
+  Key,
+  Upload,
+  X,
+  Terminal
 } from 'lucide-react';
 
 // --- Icons Helper ---
@@ -45,6 +48,10 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  
+  // Import Modal State
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importText, setImportText] = useState('');
   
   // Context Menu State
   const [menuPos, setMenuPos] = useState<ContextMenuPosition | null>(null);
@@ -78,7 +85,6 @@ const App: React.FC = () => {
       setHasApiKey(true);
     } else {
       // Fallback per ambienti senza integrazione AI Studio (es. browser locale)
-      // Permette all'utente di inserire manualmente la chiave per la sessione corrente
       const manualKey = window.prompt(
         "Ambiente AI Studio non rilevato.\n\nPer utilizzare l'app, inserisci manualmente la tua API Key di Google Gemini:"
       );
@@ -104,7 +110,6 @@ const App: React.FC = () => {
            setErrorMsg("Nessun dispositivo rilevato. Riprova.");
         } else {
            setDevices(data);
-           // Auto analyze after scan
            const analysis = await analyzeNetwork(data);
            setAiAnalysis(analysis);
         }
@@ -116,9 +121,38 @@ const App: React.FC = () => {
     }
   };
 
+  const handleImportRealData = async () => {
+      if (!importText.trim()) return;
+      
+      setIsLoading(true);
+      setErrorMsg(null);
+      setShowImportModal(false);
+      
+      try {
+          // Utilizziamo l'IA per parsare il testo copiato dall'utente
+          const data = await parseImportedData(importText);
+          if (data.length === 0) {
+              setErrorMsg("Non sono riuscito a trovare dispositivi nel testo fornito. Assicurati di copiare l'intero output.");
+          } else {
+              setDevices(data);
+              const analysis = await analyzeNetwork(data);
+              setAiAnalysis(analysis);
+              setViewMode('map');
+          }
+      } catch (e: any) {
+          console.error("Import fallito", e);
+          setErrorMsg(e.message || "Errore durante l'analisi dei dati importati.");
+      } finally {
+          setIsLoading(false);
+          setImportText('');
+      }
+  };
+
   // Load data when key is confirmed
   useEffect(() => {
     if (hasApiKey) {
+        // Opzionale: Non caricare nulla automaticamente, aspetta l'utente?
+        // Per ora carichiamo la demo, l'utente può fare "Importa" dopo.
         handleScanNetwork();
     }
   }, [hasApiKey]);
@@ -164,7 +198,6 @@ const App: React.FC = () => {
     }
     
     closeMenu();
-    // In una app reale, qui chiameremmo il backend
     if (action === 'ping') alert(`Ping verso ${device.ip}... (Simulazione: Successo 2ms)`);
   };
 
@@ -347,14 +380,21 @@ const App: React.FC = () => {
             </button>
         </nav>
 
-        <div className="p-4 border-t border-slate-800">
+        <div className="p-4 border-t border-slate-800 space-y-2">
+             <button 
+                onClick={() => setShowImportModal(true)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-indigo-400 border border-indigo-500/30 rounded-md transition-colors"
+             >
+                 <Upload size={16} />
+                 Importa Dati Reali
+             </button>
              <button 
                 onClick={handleScanNetwork}
                 disabled={isLoading}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors disabled:opacity-50"
             >
                 <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-                {isLoading ? 'Aggiorna Rete' : 'Nuova Scansione'}
+                {isLoading ? 'Aggiorna Rete' : 'Demo Casuale'}
             </button>
         </div>
       </aside>
@@ -407,6 +447,55 @@ const App: React.FC = () => {
             {viewMode === 'wan' && renderWanTrace()}
         </div>
       </main>
+
+      {/* Modal Import */}
+      {showImportModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
+              <div className="bg-slate-800 w-full max-w-2xl rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                  <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-900">
+                      <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                          <Terminal className="w-5 h-5 text-indigo-400"/> Importa dalla tua Rete Reale
+                      </h3>
+                      <button onClick={() => setShowImportModal(false)} className="text-slate-400 hover:text-white">
+                          <X size={20} />
+                      </button>
+                  </div>
+                  <div className="p-6 overflow-y-auto">
+                      <div className="bg-indigo-900/20 border border-indigo-500/30 rounded p-4 mb-4 text-sm text-indigo-200">
+                          <p className="font-bold mb-1">Istruzioni:</p>
+                          <p>Per motivi di sicurezza, i browser non possono scansionare direttamente la rete locale. Tuttavia, puoi farlo tu:</p>
+                          <ol className="list-decimal ml-5 mt-2 space-y-1 text-slate-300">
+                              <li>Apri il terminale del tuo computer (CMD su Windows, Terminal su Mac/Linux).</li>
+                              <li>Digita il comando <code className="bg-slate-900 px-1 py-0.5 rounded text-yellow-400">arp -a</code> e premi invio.</li>
+                              <li>Copia tutto il testo che appare e incollalo qui sotto.</li>
+                          </ol>
+                      </div>
+                      <textarea
+                        className="w-full h-48 bg-slate-950 border border-slate-700 rounded p-4 font-mono text-sm text-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+                        placeholder="Incolla qui l'output del comando arp -a..."
+                        value={importText}
+                        onChange={(e) => setImportText(e.target.value)}
+                      ></textarea>
+                  </div>
+                  <div className="p-4 border-t border-slate-700 bg-slate-900 flex justify-end gap-3">
+                      <button 
+                        onClick={() => setShowImportModal(false)}
+                        className="px-4 py-2 rounded text-slate-300 hover:bg-slate-800 transition-colors"
+                      >
+                          Annulla
+                      </button>
+                      <button 
+                        onClick={handleImportRealData}
+                        disabled={!importText.trim() || isLoading}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium flex items-center gap-2 disabled:opacity-50"
+                      >
+                          {isLoading ? <RefreshCw className="animate-spin w-4 h-4"/> : <Upload className="w-4 h-4" />}
+                          Analizza e Visualizza
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {/* Context Menu Portal */}
       <ContextMenu 
