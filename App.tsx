@@ -8,7 +8,7 @@ import {
 } from './types';
 import TopologyMap from './components/TopologyMap';
 import ContextMenu from './components/ContextMenu';
-import { generateSampleNetwork, analyzeNetwork, traceWanPath, setSessionApiKey, parseImportedData, optimizeNetworkTopology } from './services/geminiService';
+import { generateSampleNetwork, analyzeNetwork, traceWanPath, setSessionApiKey, parseImportedData, optimizeNetworkTopology, setOfflineMode } from './services/geminiService';
 import { 
   LayoutDashboard, 
   Network, 
@@ -32,7 +32,8 @@ import {
   Lock,
   User,
   Save,
-  LogOut
+  LogOut,
+  WifiOff
 } from 'lucide-react';
 
 // --- Icons Helper ---
@@ -64,6 +65,7 @@ const MarkdownViewer = ({ text }: { text: string }) => {
 const App: React.FC = () => {
   // --- Auth & Persistence State ---
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
   const [authPass, setAuthPass] = useState('');
   
@@ -129,9 +131,20 @@ const App: React.FC = () => {
       e.preventDefault();
       if (authEmail === storedEmail && authPass === storedPass) {
           setIsAuthenticated(true);
+          setIsOffline(false);
+          setOfflineMode(false);
       } else {
           alert("Credenziali non valide.");
       }
+  };
+
+  const handleOfflineLogin = () => {
+      setIsAuthenticated(true);
+      setIsOffline(true);
+      setOfflineMode(true);
+      // Clean previous analysis/devices
+      setDevices([]);
+      setAiAnalysis('');
   };
 
   const handleSaveSettings = () => {
@@ -139,15 +152,25 @@ const App: React.FC = () => {
       localStorage.setItem('netvisio_pass', storedPass);
       localStorage.setItem('netvisio_api_key', storedApiKey);
       
-      // Update session key
-      if (storedApiKey) setSessionApiKey(storedApiKey);
-
-      alert("Impostazioni salvate con successo.");
-      // If we are in settings view, go back to map? No, stay there.
+      if (storedApiKey) {
+          setSessionApiKey(storedApiKey);
+          if (isOffline) {
+              // Switch to online if key provided
+              setIsOffline(false);
+              setOfflineMode(false);
+              alert("Chiave salvata. Modalità Online attivata.");
+          } else {
+              alert("Impostazioni salvate.");
+          }
+      } else {
+          alert("Impostazioni salvate.");
+      }
   };
 
   const handleLogout = () => {
       setIsAuthenticated(false);
+      setIsOffline(false);
+      setOfflineMode(false);
       setAuthEmail('');
       setAuthPass('');
       setViewMode('map');
@@ -170,8 +193,7 @@ const App: React.FC = () => {
             .then(setAiAnalysis)
             .catch(e => {
                 console.warn("Background analysis failed", e);
-                // Non mostrare errore bloccante per l'analisi in background, ma loggalo o metti un avviso
-                setAiAnalysis("Analisi AI non disponibile al momento (Limite richieste o Errore).");
+                setAiAnalysis("Analisi non disponibile.");
             });
         }
     } catch (e: any) {
@@ -199,7 +221,7 @@ const App: React.FC = () => {
                .then(setAiAnalysis)
                .catch(e => {
                  console.warn("Background analysis failed", e);
-                 setAiAnalysis("Analisi AI non disponibile al momento.");
+                 setAiAnalysis("Analisi non disponibile.");
                });
               setViewMode('map');
           }
@@ -308,6 +330,20 @@ const App: React.FC = () => {
                           Accedi
                       </button>
                   </form>
+                  
+                  <div className="relative my-6">
+                      <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-700"></div></div>
+                      <div className="relative flex justify-center text-xs uppercase"><span className="bg-slate-800 px-2 text-slate-500">oppure</span></div>
+                  </div>
+
+                  <button 
+                    onClick={handleOfflineLogin}
+                    className="w-full bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-3 rounded transition-colors flex items-center justify-center gap-2"
+                  >
+                      <WifiOff className="w-4 h-4" />
+                      Usa senza Account (Offline)
+                  </button>
+
                   <p className="text-center mt-6 text-xs text-slate-600">
                       Default: arch.luigiresta@gmail.com / admin123
                   </p>
@@ -367,14 +403,17 @@ const App: React.FC = () => {
                                 type="password" 
                                 value={storedApiKey} 
                                 onChange={e => setStoredApiKey(e.target.value)}
-                                placeholder="Incolla la tua chiave API qui..."
+                                placeholder={isOffline ? "Nessuna chiave (Modalità Offline)" : "Incolla la tua chiave API qui..."}
                                 className="flex-1 bg-slate-900 border border-slate-600 rounded px-4 py-2 text-white font-mono"
                             />
                             {/* Visual check if key exists */}
-                            {storedApiKey && <CheckCircle2 className="text-emerald-500 w-8 h-8"/>}
+                            {storedApiKey && !isOffline && <CheckCircle2 className="text-emerald-500 w-8 h-8"/>}
                           </div>
                           <p className="text-xs text-slate-500 mt-2">
-                              La chiave verrà salvata localmente nel browser. Necessaria per analisi e importazione dati.
+                              {isOffline 
+                               ? "Al momento sei in modalità Offline. Inserisci una chiave e salva per attivare le funzioni AI."
+                               : "La chiave verrà salvata localmente nel browser. Necessaria per analisi e importazione dati avanzata."
+                              }
                           </p>
                       </div>
                   </div>
@@ -464,6 +503,7 @@ const App: React.FC = () => {
               {wanHops.length === 0 && !isTracing && !errorMsg && (
                   <div className="text-center text-slate-500 mt-20">
                       Inserisci una destinazione internet.
+                      {isOffline && <div className="text-yellow-500 mt-2 text-xs">(Simulazione Offline Attiva)</div>}
                   </div>
               )}
               <div className="relative">
@@ -482,7 +522,7 @@ const App: React.FC = () => {
                                       <div className="text-sm text-slate-400">{hop.hostname}</div>
                                   </div>
                                   <div className="text-right">
-                                      <div className="text-xs font-mono text-emerald-400">{hop.latency} ms</div>
+                                      <div className="text-xs font-mono text-emerald-400">{Math.floor(hop.latency)} ms</div>
                                       <div className="text-xs text-slate-500">{hop.location || 'Posizione Sconosciuta'}</div>
                                   </div>
                               </div>
@@ -522,7 +562,9 @@ const App: React.FC = () => {
                   <Zap className="w-16 h-16 text-yellow-400 mb-6" />
                   <h2 className="text-2xl font-bold text-slate-100 mb-2">Ottimizzazione Smart</h2>
                   <p className="text-slate-400 max-w-lg mb-8">
-                      L'IA analizzerà la tua lista di dispositivi e proporrà una nuova architettura.
+                      {isOffline 
+                        ? "In modalità offline, verrà proposta una configurazione standard basata sui dispositivi rilevati."
+                        : "L'IA analizzerà la tua lista di dispositivi e proporrà una nuova architettura."}
                   </p>
                   {devices.length > 0 && (
                       <button 
@@ -531,7 +573,7 @@ const App: React.FC = () => {
                           className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-bold text-lg flex items-center gap-2 shadow-lg"
                       >
                           {isOptimizing ? <RefreshCw className="animate-spin" /> : <Zap className="fill-current" />}
-                          Genera Configurazione Ideale
+                          Genera Configurazione {isOffline ? "(Offline)" : "Ideale"}
                       </button>
                   )}
               </div>
@@ -624,8 +666,10 @@ const App: React.FC = () => {
             </h2>
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700">
-                    <div className={`w-2 h-2 rounded-full ${errorMsg ? 'bg-red-500' : 'bg-emerald-500 animate-pulse'}`}></div>
-                    <span className="text-xs text-slate-300">{errorMsg ? 'Attenzione' : 'Sistema Online'}</span>
+                    <div className={`w-2 h-2 rounded-full ${errorMsg ? 'bg-red-500' : (isOffline ? 'bg-yellow-500' : 'bg-emerald-500 animate-pulse')}`}></div>
+                    <span className="text-xs text-slate-300">
+                        {errorMsg ? 'Attenzione' : (isOffline ? 'Modalità Offline' : 'Sistema Online')}
+                    </span>
                 </div>
             </div>
         </header>
