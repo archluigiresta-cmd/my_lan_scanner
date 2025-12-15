@@ -33,7 +33,11 @@ import {
   User,
   Save,
   LogOut,
-  WifiOff
+  WifiOff,
+  Info,
+  Code,
+  Download,
+  Search
 } from 'lucide-react';
 
 // --- Icons Helper ---
@@ -89,6 +93,7 @@ const App: React.FC = () => {
   const [showScanWizard, setShowScanWizard] = useState(false);
   const [importText, setImportText] = useState('');
   const [wizardStep, setWizardStep] = useState<1 | 2>(1);
+  const [scanMethod, setScanMethod] = useState<'manual' | 'agent'>('manual');
   
   // Context Menu State
   const [menuPos, setMenuPos] = useState<ContextMenuPosition | null>(null);
@@ -263,6 +268,36 @@ const App: React.FC = () => {
       }
   };
 
+  const handleProbeDevice = async (device: NetworkDevice) => {
+      closeMenu();
+      alert(`Avvio sondaggio porte su ${device.ip}... Controlla la console per dettagli (F12).`);
+      
+      // Simulazione di "Probe" che è tecnicamente possibile via fetch con mode: 'no-cors'
+      // per scoprire se c'è un server web (router, stampante)
+      try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2000);
+          
+          const start = Date.now();
+          await fetch(`http://${device.ip}`, { 
+              mode: 'no-cors', 
+              signal: controller.signal 
+          });
+          clearTimeout(timeoutId);
+          
+          const latency = Date.now() - start;
+          // Se la fetch non fallisce per timeout, c'è qualcosa in ascolto
+          const updatedDevices = devices.map(d => 
+              d.id === device.id ? { ...d, status: 'online' as const, latency, type: d.type === DeviceType.PC ? DeviceType.SERVER : d.type } : d
+          );
+          setDevices(updatedDevices);
+          alert(`Successo! Dispositivo ${device.ip} ha un servizio web attivo (Latency: ${latency}ms). Icona aggiornata.`);
+      } catch (e) {
+          console.warn("Probe failed", e);
+          alert(`Nessun servizio web rilevato su ${device.ip} (o bloccato da CORS/Firewall).`);
+      }
+  };
+
   // --- Context Menu Handlers ---
   const handleContextMenu = useCallback((event: React.MouseEvent, device: NetworkDevice) => {
     event.preventDefault();
@@ -279,10 +314,31 @@ const App: React.FC = () => {
     if (action === 'trace') {
         setViewMode('wan');
         setWanTarget(device.ip === '192.168.1.1' ? 'google.com' : device.ip); 
+    } else if (action === 'ping') {
+        alert(`Ping verso ${device.ip}... (Simulazione: Successo 2ms)`);
+    } else if (action === 'probe') {
+        handleProbeDevice(device);
     }
     closeMenu();
-    if (action === 'ping') alert(`Ping verso ${device.ip}... (Simulazione: Successo 2ms)`);
   };
+
+  const agentScript = `
+const { exec } = require('child_process');
+const os = require('os');
+
+console.log("NetVisio Agent - Scansione in corso...");
+
+exec('arp -a', (error, stdout, stderr) => {
+    if (error) {
+        console.error("Errore esecuzione arp:", error.message);
+        return;
+    }
+    console.log("--- COPIA DA QUI SOTTO ---");
+    console.log(stdout);
+    console.log("--- FINE COPIA ---");
+    console.log("Copia l'output qui sopra e incollalo in NetVisio.");
+});
+  `.trim();
 
   // --- RENDER: LOGIN SCREEN ---
   if (!isAuthenticated) {
@@ -498,6 +554,22 @@ const App: React.FC = () => {
                       {isTracing ? 'Tracciamento...' : 'Traccia Percorso'}
                   </button>
               </div>
+              
+              {/* Educational Banner */}
+              <div className="bg-blue-900/30 border border-blue-800 rounded-lg p-4 flex gap-3 text-sm text-slate-300">
+                <Info className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-blue-400 mb-1">Come funziona la WAN?</p>
+                  <p>
+                    Questo strumento simula un <strong>Traceroute</strong>, mostrando i "nodi di passaggio" (Router ISP) attraverso Internet per raggiungere la destinazione.
+                  </p>
+                  <p className="mt-2 text-slate-400 text-xs">
+                    <strong>Nota Bene:</strong> Non è tecnicamente possibile vedere i dispositivi privati (stampanti, PC) all'interno della rete remota di destinazione. 
+                    Il protocollo <strong>NAT</strong> nasconde la rete interna per motivi di sicurezza e privacy. Vedrai solo il "portone d'ingresso" pubblico.
+                  </p>
+                </div>
+              </div>
+
           </div>
           <div className="flex-1 overflow-auto bg-slate-800 rounded-lg border border-slate-700 p-6 relative min-h-0">
               {wanHops.length === 0 && !isTracing && !errorMsg && (
@@ -632,7 +704,7 @@ const App: React.FC = () => {
 
         <div className="p-4 border-t border-slate-800 space-y-2">
              <button 
-                onClick={() => { setShowScanWizard(true); setWizardStep(1); }}
+                onClick={() => { setShowScanWizard(true); setWizardStep(1); setScanMethod('manual'); }}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md transition-colors"
              >
                  <Upload size={16} />
@@ -712,30 +784,77 @@ const App: React.FC = () => {
                           <X size={24} />
                       </button>
                   </div>
+                  
+                  {/* Tab Selector */}
+                  <div className="flex border-b border-slate-800">
+                    <button 
+                        onClick={() => setScanMethod('manual')}
+                        className={`flex-1 py-3 text-sm font-medium transition-colors ${scanMethod === 'manual' ? 'text-white border-b-2 border-indigo-500 bg-slate-800' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                        Manuale (arp -a)
+                    </button>
+                    <button 
+                        onClick={() => setScanMethod('agent')}
+                        className={`flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${scanMethod === 'agent' ? 'text-white border-b-2 border-indigo-500 bg-slate-800' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                        <Code size={16}/> NetVisio Agent (Script)
+                    </button>
+                  </div>
+
                   <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                      <div className="bg-yellow-900/10 border border-yellow-700/30 rounded-lg p-4 flex gap-4">
-                          <ShieldAlert className="w-10 h-10 text-yellow-500 shrink-0" />
-                          <div>
-                              <h4 className="font-bold text-yellow-500 text-sm uppercase mb-1">Perché è richiesto questo passaggio?</h4>
-                              <p className="text-sm text-yellow-200/80 leading-relaxed">
-                                  Sandbox Browser: per motivi di sicurezza dobbiamo incollare manualmente l'output di <code>arp -a</code>.
-                              </p>
-                          </div>
-                      </div>
-                      <div className={`transition-opacity duration-300 ${wizardStep === 1 ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                      
+                      {/* Manual Method */}
+                      {scanMethod === 'manual' && (
+                        <>
+                            <div className="bg-yellow-900/10 border border-yellow-700/30 rounded-lg p-4 flex gap-4">
+                                <ShieldAlert className="w-10 h-10 text-yellow-500 shrink-0" />
+                                <div>
+                                    <h4 className="font-bold text-yellow-500 text-sm uppercase mb-1">Limite Browser Sandbox</h4>
+                                    <p className="text-sm text-yellow-200/80 leading-relaxed">
+                                        Per motivi di sicurezza, i browser non possono scansionare direttamente la rete.
+                                    </p>
+                                </div>
+                            </div>
+                            <div className={`transition-opacity duration-300 ${wizardStep === 1 ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                                <div className="flex items-center gap-3 mb-3">
+                                    <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">1</span>
+                                    <h4 className="text-slate-200 font-medium">Esegui comando: <code className="text-green-400 mx-2">arp -a</code></h4>
+                                </div>
+                            </div>
+                        </>
+                      )}
+
+                      {/* Agent Method */}
+                      {scanMethod === 'agent' && (
+                        <>
+                           <div className="bg-indigo-900/20 border border-indigo-700/30 rounded-lg p-4">
+                                <h4 className="font-bold text-indigo-400 text-sm mb-2">NetVisio Agent (Node.js)</h4>
+                                <p className="text-sm text-slate-300 mb-4">
+                                    Questo script esegue la scansione per te. Se hai Node.js installato, crea un file <code>scan.js</code> e incollaci questo codice, poi eseguilo con <code>node scan.js</code>.
+                                </p>
+                                <div className="relative bg-slate-950 p-4 rounded-lg border border-slate-800 font-mono text-xs text-slate-300 overflow-x-auto">
+                                    <pre>{agentScript}</pre>
+                                    <button 
+                                        onClick={() => navigator.clipboard.writeText(agentScript)}
+                                        className="absolute top-2 right-2 p-2 bg-slate-800 hover:bg-slate-700 rounded text-slate-400 hover:text-white"
+                                        title="Copia codice"
+                                    >
+                                        <Code size={16} />
+                                    </button>
+                                </div>
+                           </div>
+                        </>
+                      )}
+
+                      {/* Input Area (Common) */}
+                      <div className={`transition-opacity duration-300 ${wizardStep === 1 && scanMethod === 'manual' ? 'opacity-50' : 'opacity-100'}`}>
                           <div className="flex items-center gap-3 mb-3">
-                              <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">1</span>
-                              <h4 className="text-slate-200 font-medium">Esegui comando: <code className="text-green-400 mx-2">arp -a</code></h4>
-                          </div>
-                      </div>
-                      <div className={`transition-opacity duration-300 ${wizardStep === 1 ? 'opacity-50' : 'opacity-100'}`}>
-                          <div className="flex items-center gap-3 mb-3">
-                              <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">2</span>
-                              <h4 className="text-slate-200 font-medium">Incolla qui:</h4>
+                              <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">{scanMethod === 'manual' ? 2 : '->'}</span>
+                              <h4 className="text-slate-200 font-medium">Incolla qui l'output:</h4>
                           </div>
                           <textarea
                             className="w-full h-32 bg-slate-950 border border-slate-700 rounded p-4 font-mono text-sm text-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none resize-none placeholder:text-slate-600"
-                            placeholder="Output arp -a..."
+                            placeholder={scanMethod === 'manual' ? "Output di arp -a..." : "Incolla l'output dello script scan.js..."}
                             value={importText}
                             onChange={(e) => {
                                 setImportText(e.target.value);

@@ -227,24 +227,35 @@ export const generateSampleNetwork = async (): Promise<NetworkDevice[]> => {
 
 export const traceWanPath = async (targetHost: string): Promise<WanHop[]> => {
   if (isOfflineMode) {
-      // Mock simulation
-      return Array.from({ length: 8 }).map((_, i) => ({
-          hopNumber: i + 1,
-          ip: i === 0 ? '192.168.1.1' : `212.10.5.${10 + i * 5}`,
-          hostname: i === 0 ? 'router.local' : `node-${i}.isp-backbone.net`,
-          latency: (i + 1) * 5 + Math.random() * 10,
-          location: i === 0 ? 'Locale' : 'Backbone ISP'
-      }));
+      // Mock simulation: Hops must be PUBLIC IPs to illustrate the point
+      return [
+        { hopNumber: 1, ip: '192.168.1.1', hostname: 'gateway.local', latency: 1, location: 'Tua Rete Locale (LAN)' },
+        { hopNumber: 2, ip: '10.25.0.1', hostname: 'isp-node-local.provider.it', latency: 12, location: 'Centrale ISP Locale' },
+        { hopNumber: 3, ip: '142.250.1.1', hostname: 'backbone-milano.provider.it', latency: 25, location: 'Backbone Milano' },
+        { hopNumber: 4, ip: '216.58.1.1', hostname: 'backbone-rome.provider.it', latency: 35, location: 'Backbone Roma' },
+        { hopNumber: 5, ip: '172.217.16.1', hostname: 'international-gateway.provider.net', latency: 45, location: 'Gateway Internazionale' },
+        { hopNumber: 6, ip: '8.8.8.8', hostname: targetHost, latency: 48, location: 'Destinazione Pubblica (WAN)' }
+      ];
   }
   
   try {
     const ai = getAiClient();
     if(!ai) throw new Error("Offline");
-    const prompt = `Simula traceroute verso ${targetHost}. JSON.`;
+    const prompt = `
+      Simula un traceroute realistico verso "${targetHost}".
+      Genera 6-8 hop.
+      Hop 1: 192.168.1.1 (Gateway).
+      Hop 2-N: Indirizzi IP Pubblici (non 192.168.x.x) che rappresentano nodi ISP, Backbone in fibra ottica e Gateway.
+      Ultimo Hop: IP Pubblico della destinazione.
+      
+      IMPORTANTE: Non inventare dispositivi interni (PC, Stampanti) nella rete di destinazione, perché il NAT li nasconde. Mostra solo il router di ingresso pubblico.
+      
+      Restituisci JSON.
+    `;
     const response = await retryWithBackoff<GenerateContentResponse>(() => ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: prompt,
-      config: { responseMimeType: "application/json" } // Schema semplificato per brevità
+      config: { responseMimeType: "application/json" } 
     }));
     return JSON.parse(cleanJson(response.text || "[]"));
   } catch (error) {

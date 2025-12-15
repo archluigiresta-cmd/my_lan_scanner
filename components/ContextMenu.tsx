@@ -1,5 +1,6 @@
 import React from 'react';
 import { ContextMenuPosition, NetworkDevice } from '../types';
+import { Search } from 'lucide-react';
 
 interface ContextMenuProps {
   position: ContextMenuPosition | null;
@@ -25,6 +26,12 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ position, device, onClose, on
           className="w-full text-left px-4 py-2 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex items-center gap-2"
         >
           <span className="text-green-400">●</span> Ping Dispositivo
+        </button>
+         <button
+          onClick={() => onAction('probe', device)}
+          className="w-full text-left px-4 py-2 hover:bg-slate-700 text-indigo-300 hover:text-white transition-colors flex items-center gap-2"
+        >
+          <Search size={14}/> Sonda Porte Web (80/443)
         </button>
         <button
           onClick={() => onAction('details', device)}
