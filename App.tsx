@@ -23,7 +23,11 @@ import {
   Key,
   Upload,
   X,
-  Terminal
+  Terminal,
+  ShieldAlert,
+  HelpCircle,
+  Copy,
+  CheckCircle2
 } from 'lucide-react';
 
 // --- Icons Helper ---
@@ -49,9 +53,10 @@ const App: React.FC = () => {
   const [aiAnalysis, setAiAnalysis] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
-  // Import Modal State
-  const [showImportModal, setShowImportModal] = useState(false);
+  // Import Modal State (Now Scan Wizard)
+  const [showScanWizard, setShowScanWizard] = useState(false);
   const [importText, setImportText] = useState('');
+  const [wizardStep, setWizardStep] = useState<1 | 2>(1);
   
   // Context Menu State
   const [menuPos, setMenuPos] = useState<ContextMenuPosition | null>(null);
@@ -84,16 +89,12 @@ const App: React.FC = () => {
       await aistudio.openSelectKey();
       setHasApiKey(true);
     } else {
-      // Fallback per ambienti senza integrazione AI Studio (es. browser locale)
       const manualKey = window.prompt(
         "Ambiente AI Studio non rilevato.\n\nPer utilizzare l'app, inserisci manualmente la tua API Key di Google Gemini:"
       );
-      
       if (manualKey && manualKey.trim().length > 0) {
         setSessionApiKey(manualKey.trim());
         setHasApiKey(true);
-      } else {
-        alert("Inserimento annullato o chiave non valida. L'app necessita di una API Key per funzionare.");
       }
     }
   };
@@ -104,6 +105,7 @@ const App: React.FC = () => {
     setIsLoading(true);
     setAiAnalysis('');
     setErrorMsg(null);
+    setShowScanWizard(false); // Close wizard if open
     try {
         const data = await generateSampleNetwork();
         if (data.length === 0) {
@@ -126,10 +128,9 @@ const App: React.FC = () => {
       
       setIsLoading(true);
       setErrorMsg(null);
-      setShowImportModal(false);
+      setShowScanWizard(false);
       
       try {
-          // Utilizziamo l'IA per parsare il testo copiato dall'utente
           const data = await parseImportedData(importText);
           if (data.length === 0) {
               setErrorMsg("Non sono riuscito a trovare dispositivi nel testo fornito. Assicurati di copiare l'intero output.");
@@ -145,17 +146,16 @@ const App: React.FC = () => {
       } finally {
           setIsLoading(false);
           setImportText('');
+          setWizardStep(1);
       }
   };
 
-  // Load data when key is confirmed
+  // On Load - Open Wizard immediately if authenticated
   useEffect(() => {
-    if (hasApiKey) {
-        // Opzionale: Non caricare nulla automaticamente, aspetta l'utente?
-        // Per ora carichiamo la demo, l'utente può fare "Importa" dopo.
-        handleScanNetwork();
+    if (hasApiKey && devices.length === 0) {
+        setShowScanWizard(true);
     }
-  }, [hasApiKey]);
+  }, [hasApiKey, devices.length]);
 
   const handleTraceWan = async () => {
       setIsTracing(true);
@@ -177,7 +177,6 @@ const App: React.FC = () => {
   };
 
   // --- Context Menu Handlers ---
-
   const handleContextMenu = useCallback((event: React.MouseEvent, device: NetworkDevice) => {
     event.preventDefault();
     setMenuPos({ x: event.clientX, y: event.clientY, deviceId: device.id });
@@ -190,13 +189,10 @@ const App: React.FC = () => {
   }, []);
 
   const handleMenuAction = (action: string, device: NetworkDevice) => {
-    console.log(`Azione ${action} su ${device.name}`);
-    
     if (action === 'trace') {
         setViewMode('wan');
         setWanTarget(device.ip === '192.168.1.1' ? 'google.com' : device.ip); 
     }
-    
     closeMenu();
     if (action === 'ping') alert(`Ping verso ${device.ip}... (Simulazione: Successo 2ms)`);
   };
@@ -272,22 +268,18 @@ const App: React.FC = () => {
                   </button>
               </div>
           </div>
-
           <div className="flex-1 overflow-auto bg-slate-800 rounded-lg border border-slate-700 p-6 relative">
               {wanHops.length === 0 && !isTracing && !errorMsg && (
                   <div className="text-center text-slate-500 mt-20">
                       Inserisci una destinazione per visualizzare il percorso di rete.
                   </div>
               )}
-              
               <div className="relative">
                   {wanHops.map((hop, index) => (
                       <div key={index} className="flex group mb-8 last:mb-0 relative z-10 animate-fade-in" style={{ animationDelay: `${index * 150}ms` }}>
-                           {/* Connecting Line */}
                           {index !== wanHops.length - 1 && (
                               <div className="absolute left-6 top-10 bottom-0 w-0.5 bg-indigo-900 group-hover:bg-indigo-600 transition-colors h-12"></div>
                           )}
-                          
                           <div className="w-12 h-12 rounded-full bg-slate-900 border-2 border-indigo-500 flex items-center justify-center font-bold text-indigo-400 z-10 shrink-0">
                               {hop.hopNumber}
                           </div>
@@ -330,8 +322,6 @@ const App: React.FC = () => {
                     Inserisci API Key
                 </button>
                 <p className="mt-4 text-xs text-slate-500">
-                    Sei su una connessione sicura. La tua chiave non viene salvata sui nostri server.
-                    <br/>
                     <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">
                         Informazioni sui costi
                     </a>
@@ -345,7 +335,7 @@ const App: React.FC = () => {
   return (
     <div 
         className="flex h-screen bg-slate-900 text-slate-100"
-        onClick={closeMenu} // Global click closes context menu
+        onClick={closeMenu} 
     >
       {/* Sidebar */}
       <aside className="w-64 bg-slate-950 border-r border-slate-800 flex flex-col">
@@ -382,20 +372,12 @@ const App: React.FC = () => {
 
         <div className="p-4 border-t border-slate-800 space-y-2">
              <button 
-                onClick={() => setShowImportModal(true)}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-indigo-400 border border-indigo-500/30 rounded-md transition-colors"
+                onClick={() => { setShowScanWizard(true); setWizardStep(1); }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md transition-colors"
              >
                  <Upload size={16} />
-                 Importa Dati Reali
+                 Scansione Rete
              </button>
-             <button 
-                onClick={handleScanNetwork}
-                disabled={isLoading}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors disabled:opacity-50"
-            >
-                <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-                {isLoading ? 'Aggiorna Rete' : 'Demo Casuale'}
-            </button>
         </div>
       </aside>
 
@@ -416,7 +398,6 @@ const App: React.FC = () => {
             </div>
         </header>
 
-        {/* Error Banner */}
         {errorMsg && (
             <div className="bg-red-900/50 border-l-4 border-red-500 p-4 m-4 flex items-center gap-3 text-red-200 animate-fade-in">
                 <AlertTriangle className="text-red-400" />
@@ -427,7 +408,6 @@ const App: React.FC = () => {
         <div className="flex-1 overflow-hidden relative p-4">
             {viewMode === 'map' && (
                 <div className="w-full h-full">
-                     {/* AI Analysis Overlay */}
                      {aiAnalysis && !errorMsg && (
                         <div className="absolute bottom-6 right-6 z-20 w-80 max-h-60 overflow-y-auto bg-slate-800/90 backdrop-blur border border-indigo-500/30 p-4 rounded-lg shadow-2xl text-xs text-slate-300">
                             <h4 className="font-bold text-indigo-400 mb-2 flex items-center gap-2">
@@ -448,50 +428,103 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      {/* Modal Import */}
-      {showImportModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
-              <div className="bg-slate-800 w-full max-w-2xl rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                  <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-900">
-                      <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                          <Terminal className="w-5 h-5 text-indigo-400"/> Importa dalla tua Rete Reale
-                      </h3>
-                      <button onClick={() => setShowImportModal(false)} className="text-slate-400 hover:text-white">
-                          <X size={20} />
-                      </button>
-                  </div>
-                  <div className="p-6 overflow-y-auto">
-                      <div className="bg-indigo-900/20 border border-indigo-500/30 rounded p-4 mb-4 text-sm text-indigo-200">
-                          <p className="font-bold mb-1">Istruzioni:</p>
-                          <p>Per motivi di sicurezza, i browser non possono scansionare direttamente la rete locale. Tuttavia, puoi farlo tu:</p>
-                          <ol className="list-decimal ml-5 mt-2 space-y-1 text-slate-300">
-                              <li>Apri il terminale del tuo computer (CMD su Windows, Terminal su Mac/Linux).</li>
-                              <li>Digita il comando <code className="bg-slate-900 px-1 py-0.5 rounded text-yellow-400">arp -a</code> e premi invio.</li>
-                              <li>Copia tutto il testo che appare e incollalo qui sotto.</li>
-                          </ol>
+      {/* SCAN WIZARD */}
+      {showScanWizard && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
+              <div className="bg-slate-900 w-full max-w-3xl rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                  {/* Header */}
+                  <div className="p-6 border-b border-slate-800 flex justify-between items-start bg-slate-900">
+                      <div>
+                          <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                              <Terminal className="w-6 h-6 text-indigo-500"/> Wizard Scansione Rete
+                          </h3>
+                          <p className="text-slate-400 text-sm mt-1">Configurazione guidata per mappare la rete locale (LAN)</p>
                       </div>
-                      <textarea
-                        className="w-full h-48 bg-slate-950 border border-slate-700 rounded p-4 font-mono text-sm text-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
-                        placeholder="Incolla qui l'output del comando arp -a..."
-                        value={importText}
-                        onChange={(e) => setImportText(e.target.value)}
-                      ></textarea>
+                      <button onClick={() => setShowScanWizard(false)} className="text-slate-400 hover:text-white">
+                          <X size={24} />
+                      </button>
                   </div>
-                  <div className="p-4 border-t border-slate-700 bg-slate-900 flex justify-end gap-3">
-                      <button 
-                        onClick={() => setShowImportModal(false)}
-                        className="px-4 py-2 rounded text-slate-300 hover:bg-slate-800 transition-colors"
+
+                  {/* Body */}
+                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                      
+                      {/* Why Box */}
+                      <div className="bg-yellow-900/10 border border-yellow-700/30 rounded-lg p-4 flex gap-4">
+                          <ShieldAlert className="w-10 h-10 text-yellow-500 shrink-0" />
+                          <div>
+                              <h4 className="font-bold text-yellow-500 text-sm uppercase mb-1">Perché è richiesto questo passaggio?</h4>
+                              <p className="text-sm text-yellow-200/80 leading-relaxed">
+                                  Per motivi di sicurezza, i browser web operano in una "Sandbox" e non possono vedere direttamente i dispositivi collegati al tuo Wi-Fi/LAN. 
+                                  Solo tu, come utente, puoi autorizzare questa operazione eseguendo un comando di sistema sicuro.
+                              </p>
+                          </div>
+                      </div>
+
+                      {/* Step 1: Command */}
+                      <div className={`transition-opacity duration-300 ${wizardStep === 1 ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                          <div className="flex items-center gap-3 mb-3">
+                              <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">1</span>
+                              <h4 className="text-slate-200 font-medium">Esegui il comando di scansione</h4>
+                          </div>
+                          <div className="bg-slate-950 rounded border border-slate-800 p-4 font-mono text-sm relative group">
+                              <div className="text-slate-500 mb-2 text-xs">// Windows (Prompt dei comandi)</div>
+                              <code className="text-green-400 block mb-3">arp -a</code>
+                              <div className="text-slate-500 mb-2 text-xs">// macOS / Linux (Terminale)</div>
+                              <code className="text-green-400 block">arp -a</code>
+                              
+                              <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <span className="text-xs text-slate-500">Copia comando ed esegui</span>
+                              </div>
+                          </div>
+                      </div>
+
+                      {/* Step 2: Paste */}
+                      <div className={`transition-opacity duration-300 ${wizardStep === 1 ? 'opacity-50' : 'opacity-100'}`}>
+                          <div className="flex items-center gap-3 mb-3">
+                              <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">2</span>
+                              <h4 className="text-slate-200 font-medium">Incolla il risultato qui sotto</h4>
+                          </div>
+                          <textarea
+                            className="w-full h-32 bg-slate-950 border border-slate-700 rounded p-4 font-mono text-sm text-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none resize-none placeholder:text-slate-600"
+                            placeholder="Esempio: 
+192.168.1.1    00-11-22-33-44-55   dinamico
+192.168.1.15   aa-bb-cc-dd-ee-ff   statico ..."
+                            value={importText}
+                            onChange={(e) => {
+                                setImportText(e.target.value);
+                                if(e.target.value.length > 10) setWizardStep(2);
+                            }}
+                            onClick={() => setWizardStep(2)}
+                          ></textarea>
+                      </div>
+
+                  </div>
+
+                  {/* Footer */}
+                  <div className="p-6 border-t border-slate-800 bg-slate-900 flex justify-between items-center">
+                       <button 
+                        onClick={handleScanNetwork}
+                        className="text-slate-400 hover:text-white text-sm underline decoration-dotted"
                       >
-                          Annulla
+                          Non posso eseguire comandi? Usa dati Demo
                       </button>
-                      <button 
-                        onClick={handleImportRealData}
-                        disabled={!importText.trim() || isLoading}
-                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium flex items-center gap-2 disabled:opacity-50"
-                      >
-                          {isLoading ? <RefreshCw className="animate-spin w-4 h-4"/> : <Upload className="w-4 h-4" />}
-                          Analizza e Visualizza
-                      </button>
+
+                      <div className="flex gap-3">
+                        <button 
+                            onClick={() => setShowScanWizard(false)}
+                            className="px-4 py-2 rounded text-slate-300 hover:bg-slate-800 transition-colors"
+                        >
+                            Chiudi
+                        </button>
+                        <button 
+                            onClick={handleImportRealData}
+                            disabled={!importText.trim() || isLoading}
+                            className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-indigo-500/20"
+                        >
+                            {isLoading ? <RefreshCw className="animate-spin w-4 h-4"/> : <CheckCircle2 className="w-4 h-4" />}
+                            Analizza Rete
+                        </button>
+                      </div>
                   </div>
               </div>
           </div>

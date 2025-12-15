@@ -60,15 +60,18 @@ export const parseImportedData = async (rawText: string): Promise<NetworkDevice[
       Analizza il seguente output testuale grezzo proveniente da un comando di rete (es. 'arp -a', 'ip neigh', o un elenco CSV/testo).
       Estrai tutti i dispositivi unici trovati e restituiscili come JSON strutturato.
       
-      Regole:
-      1. Estrai IP e MAC address se presenti.
-      2. Cerca di dedurre il 'manufacturer' dal MAC address o dal nome host se possibile (inventa un nome plausibile se non c'è).
-      3. Cerca di dedurre il 'type' (PC, MOBILE, ROUTER, PRINTER) basandoti sul nome o sul produttore. Se è un gateway (es. finisce con .1 o .254), classificalo come ROUTER.
-      4. Assegna 'parentId' al Router identificato per tutti gli altri device.
-      5. Genera ID univoci.
-      6. Ignora indirizzi multicast (224.x.x.x) o broadcast (255.x.x.x).
+      Regole Importanti:
+      1. Estrai IP e MAC address se presenti. Riconosci formati come '192.168.x.x' e 'aa-bb-cc...' o 'aa:bb:cc...'.
+      2. Cerca di dedurre il 'manufacturer' (Produttore) dal MAC address o dal nome host se possibile (es. "Apple", "Intel", "Samsung"). Se sconosciuto, usa "Generic".
+      3. Cerca di dedurre il 'type' (PC, MOBILE, ROUTER, PRINTER, SWITCH) basandoti sul nome, sul produttore o sulla posizione nella lista.
+         - Se l'IP finisce per .1 o .254 o .138, è molto probabilmente un ROUTER.
+         - Se il nome contiene "iPhone" o "Android", è MOBILE.
+      4. Assegna 'parentId' all'ID del Router principale identificato per tutti gli altri device (struttura a stella).
+      5. Genera ID univoci per ogni device.
+      6. Ignora righe con indirizzi multicast (224.x.x.x, 239.x.x.x) o broadcast (255.x.x.x).
+      7. Lo stato (dinamico/statico) non determina se il device è online, assumili tutti 'online' se presenti nella lista ARP recente.
 
-      Input Grezzo:
+      Input Grezzo (potrebbe contenere intestazioni o testo inutile):
       """
       ${rawText.substring(0, 5000)}
       """
