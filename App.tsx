@@ -19,7 +19,8 @@ import {
   Smartphone,
   Printer,
   Laptop,
-  AlertTriangle
+  AlertTriangle,
+  Key
 } from 'lucide-react';
 
 // --- Icons Helper ---
@@ -35,6 +36,10 @@ const getDeviceIcon = (type: DeviceType) => {
 };
 
 const App: React.FC = () => {
+  // Auth State
+  const [hasApiKey, setHasApiKey] = useState(false);
+
+  // App State
   const [devices, setDevices] = useState<NetworkDevice[]>([]);
   const [viewMode, setViewMode] = useState<'list' | 'map' | 'wan'>('map');
   const [isLoading, setIsLoading] = useState(false);
@@ -50,6 +55,32 @@ const App: React.FC = () => {
   const [wanHops, setWanHops] = useState<WanHop[]>([]);
   const [isTracing, setIsTracing] = useState(false);
 
+  // --- Initialization & Auth ---
+  useEffect(() => {
+    const checkKey = async () => {
+      const aistudio = (window as any).aistudio;
+      if (aistudio && aistudio.hasSelectedApiKey) {
+        const has = await aistudio.hasSelectedApiKey();
+        if (has) {
+          setHasApiKey(true);
+        }
+      } else if (process.env.API_KEY) {
+        setHasApiKey(true);
+      }
+    };
+    checkKey();
+  }, []);
+
+  const requestApiKey = async () => {
+    const aistudio = (window as any).aistudio;
+    if (aistudio && aistudio.openSelectKey) {
+      await aistudio.openSelectKey();
+      setHasApiKey(true);
+    } else {
+      alert("Ambiente AI Studio non rilevato. Assicurati che API_KEY sia impostato nelle variabili d'ambiente.");
+    }
+  };
+
   // --- Actions ---
 
   const handleScanNetwork = async () => {
@@ -59,7 +90,7 @@ const App: React.FC = () => {
     try {
         const data = await generateSampleNetwork();
         if (data.length === 0) {
-           setErrorMsg("Nessun dispositivo rilevato. Verifica la chiave API o la connessione.");
+           setErrorMsg("Nessun dispositivo rilevato. Riprova.");
         } else {
            setDevices(data);
            // Auto analyze after scan
@@ -73,6 +104,13 @@ const App: React.FC = () => {
         setIsLoading(false);
     }
   };
+
+  // Load data when key is confirmed
+  useEffect(() => {
+    if (hasApiKey) {
+        handleScanNetwork();
+    }
+  }, [hasApiKey]);
 
   const handleTraceWan = async () => {
       setIsTracing(true);
@@ -118,12 +156,6 @@ const App: React.FC = () => {
     // In una app reale, qui chiameremmo il backend
     if (action === 'ping') alert(`Ping verso ${device.ip}... (Simulazione: Successo 2ms)`);
   };
-
-  useEffect(() => {
-    // Load initial data
-    handleScanNetwork();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // --- Render Helpers ---
 
@@ -234,6 +266,38 @@ const App: React.FC = () => {
       </div>
   );
 
+  // --- Auth Render ---
+  if (!hasApiKey) {
+     return (
+        <div className="flex h-screen bg-slate-900 text-slate-100 items-center justify-center p-4">
+            <div className="max-w-md w-full bg-slate-800 p-8 rounded-xl shadow-2xl border border-slate-700 text-center animate-fade-in">
+                <div className="bg-indigo-500/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Network className="w-8 h-8 text-indigo-500" />
+                </div>
+                <h1 className="text-2xl font-bold mb-2">NetVisio</h1>
+                <p className="text-slate-400 mb-8">
+                    Per utilizzare le funzionalità di analisi di rete e tracciamento, è necessaria una API Key valida.
+                </p>
+                <button 
+                    onClick={requestApiKey}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-lg transition-all transform hover:scale-105 flex items-center justify-center gap-2"
+                >
+                    <Key className="w-5 h-5" />
+                    Seleziona API Key
+                </button>
+                <p className="mt-4 text-xs text-slate-500">
+                    Sei su una connessione sicura. La tua chiave non viene salvata sui nostri server.
+                    <br/>
+                    <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">
+                        Informazioni sui costi
+                    </a>
+                </p>
+            </div>
+        </div>
+     );
+  }
+
+  // --- Main Render ---
   return (
     <div 
         className="flex h-screen bg-slate-900 text-slate-100"
@@ -279,7 +343,7 @@ const App: React.FC = () => {
                 className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors disabled:opacity-50"
             >
                 <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-                {isLoading ? 'Scansione in corso...' : 'Scansiona Rete'}
+                {isLoading ? 'Aggiorna Rete' : 'Nuova Scansione'}
             </button>
         </div>
       </aside>
@@ -295,7 +359,7 @@ const App: React.FC = () => {
                     <div className={`w-2 h-2 rounded-full ${errorMsg ? 'bg-red-500' : 'bg-emerald-500 animate-pulse'}`}></div>
                     <span className="text-xs text-slate-300">{errorMsg ? 'Attenzione' : 'Sistema Online'}</span>
                 </div>
-                <button className="p-2 text-slate-400 hover:text-white transition-colors">
+                <button className="p-2 text-slate-400 hover:text-white transition-colors" onClick={() => requestApiKey()}>
                     <Settings size={20} />
                 </button>
             </div>
