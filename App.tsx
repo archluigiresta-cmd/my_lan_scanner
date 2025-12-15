@@ -7,7 +7,7 @@ import {
 } from './types';
 import TopologyMap from './components/TopologyMap';
 import ContextMenu from './components/ContextMenu';
-import { generateSampleNetwork, analyzeNetwork, traceWanPath } from './services/geminiService';
+import { generateSampleNetwork, analyzeNetwork, traceWanPath, setSessionApiKey } from './services/geminiService';
 import { 
   LayoutDashboard, 
   Network, 
@@ -77,7 +77,18 @@ const App: React.FC = () => {
       await aistudio.openSelectKey();
       setHasApiKey(true);
     } else {
-      alert("Ambiente AI Studio non rilevato. Assicurati che API_KEY sia impostato nelle variabili d'ambiente.");
+      // Fallback per ambienti senza integrazione AI Studio (es. browser locale)
+      // Permette all'utente di inserire manualmente la chiave per la sessione corrente
+      const manualKey = window.prompt(
+        "Ambiente AI Studio non rilevato.\n\nPer utilizzare l'app, inserisci manualmente la tua API Key di Google Gemini:"
+      );
+      
+      if (manualKey && manualKey.trim().length > 0) {
+        setSessionApiKey(manualKey.trim());
+        setHasApiKey(true);
+      } else {
+        alert("Inserimento annullato o chiave non valida. L'app necessita di una API Key per funzionare.");
+      }
     }
   };
 
@@ -283,7 +294,7 @@ const App: React.FC = () => {
                     className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-lg transition-all transform hover:scale-105 flex items-center justify-center gap-2"
                 >
                     <Key className="w-5 h-5" />
-                    Seleziona API Key
+                    Inserisci API Key
                 </button>
                 <p className="mt-4 text-xs text-slate-500">
                     Sei su una connessione sicura. La tua chiave non viene salvata sui nostri server.

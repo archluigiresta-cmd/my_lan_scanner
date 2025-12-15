@@ -1,12 +1,20 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { NetworkDevice, DeviceType, WanHop } from "../types";
 
+// Variabile per memorizzare la chiave temporanea di sessione
+let sessionApiKey: string | null = null;
+
+export const setSessionApiKey = (key: string) => {
+  sessionApiKey = key;
+};
+
 // Helper per ottenere l'istanza del client AI
-// Assume che process.env.API_KEY sia configurato nell'ambiente
 const getAiClient = () => {
-  const apiKey = process.env.API_KEY;
+  // Priorità: Chiave di sessione (manuale) > Variabile d'ambiente
+  const apiKey = sessionApiKey || process.env.API_KEY;
+  
   if (!apiKey) {
-    throw new Error("API Key mancante. Configura process.env.API_KEY per utilizzare l'applicazione.");
+    throw new Error("API Key mancante. Configura process.env.API_KEY o inseriscila manualmente.");
   }
   return new GoogleGenAI({ apiKey });
 };
