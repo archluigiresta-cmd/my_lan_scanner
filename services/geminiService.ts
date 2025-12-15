@@ -12,6 +12,14 @@ const getAiClient = () => {
   return new GoogleGenAI({ apiKey });
 };
 
+// Helper per pulire la risposta JSON da eventuali blocchi markdown
+const cleanJson = (text: string): string => {
+  if (!text) return "[]";
+  // Rimuove ```json all'inizio e ``` alla fine, o solo ```
+  let cleaned = text.replace(/```json/g, "").replace(/```/g, "");
+  return cleaned.trim();
+};
+
 export const generateSampleNetwork = async (): Promise<NetworkDevice[]> => {
   const ai = getAiClient();
   
@@ -57,7 +65,7 @@ export const generateSampleNetwork = async (): Promise<NetworkDevice[]> => {
 
     const text = response.text;
     if (!text) return [];
-    return JSON.parse(text) as NetworkDevice[];
+    return JSON.parse(cleanJson(text)) as NetworkDevice[];
   } catch (error) {
     console.error("Errore generazione rete:", error);
     return [];
@@ -101,7 +109,7 @@ export const traceWanPath = async (targetHost: string): Promise<WanHop[]> => {
 
     const text = response.text;
     if (!text) return [];
-    return JSON.parse(text) as WanHop[];
+    return JSON.parse(cleanJson(text)) as WanHop[];
   } catch (error) {
     console.error("Errore tracciamento WAN:", error);
     return [];

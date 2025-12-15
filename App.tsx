@@ -11,7 +11,6 @@ import { generateSampleNetwork, analyzeNetwork, traceWanPath } from './services/
 import { 
   LayoutDashboard, 
   Network, 
-  Search, 
   RefreshCw, 
   Settings, 
   Globe, 
@@ -19,7 +18,8 @@ import {
   Server,
   Smartphone,
   Printer,
-  Laptop
+  Laptop,
+  AlertTriangle
 } from 'lucide-react';
 
 // --- Icons Helper ---
@@ -39,6 +39,7 @@ const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<'list' | 'map' | 'wan'>('map');
   const [isLoading, setIsLoading] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string>('');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
   // Context Menu State
   const [menuPos, setMenuPos] = useState<ContextMenuPosition | null>(null);
@@ -54,15 +55,20 @@ const App: React.FC = () => {
   const handleScanNetwork = async () => {
     setIsLoading(true);
     setAiAnalysis('');
+    setErrorMsg(null);
     try {
         const data = await generateSampleNetwork();
-        setDevices(data);
-        
-        // Auto analyze after scan
-        const analysis = await analyzeNetwork(data);
-        setAiAnalysis(analysis);
-    } catch (e) {
+        if (data.length === 0) {
+           setErrorMsg("Nessun dispositivo rilevato. Verifica la chiave API o la connessione.");
+        } else {
+           setDevices(data);
+           // Auto analyze after scan
+           const analysis = await analyzeNetwork(data);
+           setAiAnalysis(analysis);
+        }
+    } catch (e: any) {
         console.error("Scansione fallita", e);
+        setErrorMsg(e.message || "Errore durante la scansione della rete.");
     } finally {
         setIsLoading(false);
     }
@@ -71,11 +77,17 @@ const App: React.FC = () => {
   const handleTraceWan = async () => {
       setIsTracing(true);
       setWanHops([]);
+      setErrorMsg(null);
       try {
           const hops = await traceWanPath(wanTarget);
-          setWanHops(hops);
-      } catch(e) {
+          if (hops.length === 0) {
+              setErrorMsg("Impossibile tracciare il percorso. Verifica la chiave API.");
+          } else {
+              setWanHops(hops);
+          }
+      } catch(e: any) {
           console.error("Tracciamento fallito", e);
+          setErrorMsg(e.message || "Errore durante il tracciamento WAN.");
       } finally {
           setIsTracing(false);
       }
@@ -186,7 +198,7 @@ const App: React.FC = () => {
           </div>
 
           <div className="flex-1 overflow-auto bg-slate-800 rounded-lg border border-slate-700 p-6 relative">
-              {wanHops.length === 0 && !isTracing && (
+              {wanHops.length === 0 && !isTracing && !errorMsg && (
                   <div className="text-center text-slate-500 mt-20">
                       Inserisci una destinazione per visualizzare il percorso di rete.
                   </div>
@@ -280,8 +292,8 @@ const App: React.FC = () => {
             </h2>
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                    <span className="text-xs text-slate-300">Sistema Online</span>
+                    <div className={`w-2 h-2 rounded-full ${errorMsg ? 'bg-red-500' : 'bg-emerald-500 animate-pulse'}`}></div>
+                    <span className="text-xs text-slate-300">{errorMsg ? 'Attenzione' : 'Sistema Online'}</span>
                 </div>
                 <button className="p-2 text-slate-400 hover:text-white transition-colors">
                     <Settings size={20} />
@@ -289,11 +301,19 @@ const App: React.FC = () => {
             </div>
         </header>
 
+        {/* Error Banner */}
+        {errorMsg && (
+            <div className="bg-red-900/50 border-l-4 border-red-500 p-4 m-4 flex items-center gap-3 text-red-200 animate-fade-in">
+                <AlertTriangle className="text-red-400" />
+                <span>{errorMsg}</span>
+            </div>
+        )}
+
         <div className="flex-1 overflow-hidden relative p-4">
             {viewMode === 'map' && (
                 <div className="w-full h-full">
                      {/* AI Analysis Overlay */}
-                     {aiAnalysis && (
+                     {aiAnalysis && !errorMsg && (
                         <div className="absolute bottom-6 right-6 z-20 w-80 max-h-60 overflow-y-auto bg-slate-800/90 backdrop-blur border border-indigo-500/30 p-4 rounded-lg shadow-2xl text-xs text-slate-300">
                             <h4 className="font-bold text-indigo-400 mb-2 flex items-center gap-2">
                                 <Activity size={12} /> Analisi Rete AI
