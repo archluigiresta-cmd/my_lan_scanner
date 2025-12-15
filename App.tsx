@@ -29,9 +29,11 @@ import {
   CheckCircle2,
   FileText,
   Zap,
-  ArrowRight
+  Lock,
+  User,
+  Save,
+  LogOut
 } from 'lucide-react';
-import ReactMarkdown from 'react'; // Note: In a real env, import ReactMarkdown from 'react-markdown'. Here we will just render raw text or simple mapping for simplicity.
 
 // --- Icons Helper ---
 const getDeviceIcon = (type: DeviceType) => {
@@ -45,13 +47,34 @@ const getDeviceIcon = (type: DeviceType) => {
     }
 };
 
+// --- Helpers Markdown ---
+const MarkdownViewer = ({ text }: { text: string }) => {
+    return (
+        <div className="prose prose-invert prose-sm max-w-none space-y-4">
+            {text.split('\n').map((line, i) => {
+                if (line.startsWith('###')) return <h3 key={i} className="text-lg font-bold text-indigo-300 mt-4">{line.replace('###', '')}</h3>
+                if (line.startsWith('**')) return <p key={i} className="font-bold text-slate-200">{line.replace(/\*\*/g, '')}</p>
+                if (line.startsWith('-')) return <li key={i} className="ml-4 text-slate-300">{line.replace('-', '')}</li>
+                return <p key={i} className="text-slate-300">{line}</p>
+            })}
+        </div>
+    )
+  }
+
 const App: React.FC = () => {
-  // Auth State
-  const [hasApiKey, setHasApiKey] = useState(false);
+  // --- Auth & Persistence State ---
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPass, setAuthPass] = useState('');
+  
+  // Stored Credentials
+  const [storedEmail, setStoredEmail] = useState('arch.luigiresta@gmail.com');
+  const [storedPass, setStoredPass] = useState('admin123');
+  const [storedApiKey, setStoredApiKey] = useState('');
 
   // App State
   const [devices, setDevices] = useState<NetworkDevice[]>([]);
-  const [viewMode, setViewMode] = useState<'list' | 'map' | 'wan' | 'analysis' | 'optimize'>('map');
+  const [viewMode, setViewMode] = useState<'list' | 'map' | 'wan' | 'analysis' | 'optimize' | 'settings'>('map');
   const [isLoading, setIsLoading] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -60,7 +83,7 @@ const App: React.FC = () => {
   const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
 
-  // Import Modal State (Now Scan Wizard)
+  // Import Modal State
   const [showScanWizard, setShowScanWizard] = useState(false);
   const [importText, setImportText] = useState('');
   const [wizardStep, setWizardStep] = useState<1 | 2>(1);
@@ -74,39 +97,61 @@ const App: React.FC = () => {
   const [wanHops, setWanHops] = useState<WanHop[]>([]);
   const [isTracing, setIsTracing] = useState(false);
 
-  // --- Initialization & Auth ---
+  // --- Initialization ---
   useEffect(() => {
-    const checkKey = async () => {
-      const aistudio = (window as any).aistudio;
-      if (aistudio && aistudio.hasSelectedApiKey) {
-        const has = await aistudio.hasSelectedApiKey();
-        if (has) {
-          setHasApiKey(true);
-        }
-      } else if (process.env.API_KEY) {
-        setHasApiKey(true);
-      }
-    };
-    checkKey();
+    // 1. Load Settings from LocalStorage
+    const savedEmail = localStorage.getItem('netvisio_email');
+    const savedPass = localStorage.getItem('netvisio_pass');
+    const savedKey = localStorage.getItem('netvisio_api_key');
+
+    if (savedEmail) setStoredEmail(savedEmail);
+    if (savedPass) setStoredPass(savedPass);
+    if (savedKey) {
+        setStoredApiKey(savedKey);
+        setSessionApiKey(savedKey); // Set in service immediately
+    }
   }, []);
 
-  const requestApiKey = async () => {
-    const aistudio = (window as any).aistudio;
-    if (aistudio && aistudio.openSelectKey) {
-      await aistudio.openSelectKey();
-      setHasApiKey(true);
-    } else {
-      const manualKey = window.prompt(
-        "Ambiente AI Studio non rilevato.\n\nPer utilizzare l'app, inserisci manualmente la tua API Key di Google Gemini:"
-      );
-      if (manualKey && manualKey.trim().length > 0) {
-        setSessionApiKey(manualKey.trim());
-        setHasApiKey(true);
+  // --- Common Error Handler ---
+  const handleError = (e: any, context: string) => {
+      console.error(context, e);
+      const msg = e?.message || JSON.stringify(e);
+      // Check for Google API Quota errors
+      if (msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+          setErrorMsg("⚠️ Limite API raggiunto (Quota Google Gemini). Riprova tra 10-20 secondi.");
+      } else {
+          setErrorMsg(`${context}: ${msg.substring(0, 100)}...`);
       }
-    }
   };
 
-  // --- Actions ---
+  // --- Handlers ---
+  const handleLogin = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (authEmail === storedEmail && authPass === storedPass) {
+          setIsAuthenticated(true);
+      } else {
+          alert("Credenziali non valide.");
+      }
+  };
+
+  const handleSaveSettings = () => {
+      localStorage.setItem('netvisio_email', storedEmail);
+      localStorage.setItem('netvisio_pass', storedPass);
+      localStorage.setItem('netvisio_api_key', storedApiKey);
+      
+      // Update session key
+      if (storedApiKey) setSessionApiKey(storedApiKey);
+
+      alert("Impostazioni salvate con successo.");
+      // If we are in settings view, go back to map? No, stay there.
+  };
+
+  const handleLogout = () => {
+      setIsAuthenticated(false);
+      setAuthEmail('');
+      setAuthPass('');
+      setViewMode('map');
+  };
 
   const handleScanNetwork = async () => {
     setIsLoading(true);
@@ -120,12 +165,17 @@ const App: React.FC = () => {
            setErrorMsg("Nessun dispositivo rilevato. Riprova.");
         } else {
            setDevices(data);
-           // Non blocchiamo l'UI per l'analisi, la facciamo in background
-           analyzeNetwork(data).then(setAiAnalysis).catch(console.error);
+           // Background Analysis
+           analyzeNetwork(data)
+            .then(setAiAnalysis)
+            .catch(e => {
+                console.warn("Background analysis failed", e);
+                // Non mostrare errore bloccante per l'analisi in background, ma loggalo o metti un avviso
+                setAiAnalysis("Analisi AI non disponibile al momento (Limite richieste o Errore).");
+            });
         }
     } catch (e: any) {
-        console.error("Scansione fallita", e);
-        setErrorMsg(e.message || "Errore durante la scansione della rete.");
+        handleError(e, "Errore Scansione");
     } finally {
         setIsLoading(false);
     }
@@ -133,7 +183,6 @@ const App: React.FC = () => {
 
   const handleImportRealData = async () => {
       if (!importText.trim()) return;
-      
       setIsLoading(true);
       setErrorMsg(null);
       setOptimizationResult(null);
@@ -142,16 +191,20 @@ const App: React.FC = () => {
       try {
           const data = await parseImportedData(importText);
           if (data.length === 0) {
-              setErrorMsg("Non sono riuscito a trovare dispositivi nel testo fornito. Assicurati di copiare l'intero output.");
+              setErrorMsg("Non trovato dispositivi nel testo fornito.");
           } else {
               setDevices(data);
-              // Background analysis
-              analyzeNetwork(data).then(setAiAnalysis).catch(console.error);
+              // Background Analysis
+              analyzeNetwork(data)
+               .then(setAiAnalysis)
+               .catch(e => {
+                 console.warn("Background analysis failed", e);
+                 setAiAnalysis("Analisi AI non disponibile al momento.");
+               });
               setViewMode('map');
           }
       } catch (e: any) {
-          console.error("Import fallito", e);
-          setErrorMsg(e.message || "Errore durante l'analisi dei dati importati.");
+          handleError(e, "Errore Importazione");
       } finally {
           setIsLoading(false);
           setImportText('');
@@ -167,18 +220,11 @@ const App: React.FC = () => {
         const result = await optimizeNetworkTopology(devices);
         setOptimizationResult(result);
     } catch (e: any) {
-        setErrorMsg("Errore durante l'ottimizzazione: " + e.message);
+        handleError(e, "Errore Ottimizzazione");
     } finally {
         setIsOptimizing(false);
     }
   };
-
-  // On Load - Open Wizard immediately if authenticated
-  useEffect(() => {
-    if (hasApiKey && devices.length === 0) {
-        setShowScanWizard(true);
-    }
-  }, [hasApiKey, devices.length]);
 
   const handleTraceWan = async () => {
       setIsTracing(true);
@@ -186,14 +232,10 @@ const App: React.FC = () => {
       setErrorMsg(null);
       try {
           const hops = await traceWanPath(wanTarget);
-          if (hops.length === 0) {
-              setErrorMsg("Impossibile tracciare il percorso. Verifica la chiave API.");
-          } else {
-              setWanHops(hops);
-          }
+          if (hops.length === 0) setErrorMsg("Impossibile tracciare il percorso.");
+          else setWanHops(hops);
       } catch(e: any) {
-          console.error("Tracciamento fallito", e);
-          setErrorMsg(e.message || "Errore durante il tracciamento WAN.");
+          handleError(e, "Errore Tracciamento");
       } finally {
           setIsTracing(false);
       }
@@ -220,33 +262,146 @@ const App: React.FC = () => {
     if (action === 'ping') alert(`Ping verso ${device.ip}... (Simulazione: Successo 2ms)`);
   };
 
-  // --- Render Helpers ---
-
-  // Simple Markdown renderer replacement since we can't easily add deps
-  const MarkdownViewer = ({ text }: { text: string }) => {
-    return (
-        <div className="prose prose-invert prose-sm max-w-none space-y-4">
-            {text.split('\n').map((line, i) => {
-                if (line.startsWith('###')) return <h3 key={i} className="text-lg font-bold text-indigo-300 mt-4">{line.replace('###', '')}</h3>
-                if (line.startsWith('**')) return <p key={i} className="font-bold text-slate-200">{line.replace(/\*\*/g, '')}</p>
-                if (line.startsWith('-')) return <li key={i} className="ml-4 text-slate-300">{line.replace('-', '')}</li>
-                return <p key={i} className="text-slate-300">{line}</p>
-            })}
-        </div>
-    )
+  // --- RENDER: LOGIN SCREEN ---
+  if (!isAuthenticated) {
+      return (
+          <div className="flex h-screen bg-slate-900 items-center justify-center p-4">
+              <div className="w-full max-w-md bg-slate-800 p-8 rounded-xl border border-slate-700 shadow-2xl animate-fade-in">
+                  <div className="flex justify-center mb-6">
+                      <div className="bg-indigo-500/20 p-4 rounded-full">
+                          <Lock className="w-10 h-10 text-indigo-500" />
+                      </div>
+                  </div>
+                  <h1 className="text-2xl font-bold text-center text-white mb-2">NetVisio Secure Login</h1>
+                  <p className="text-center text-slate-400 mb-8 text-sm">Accedi per gestire la tua rete locale</p>
+                  
+                  <form onSubmit={handleLogin} className="space-y-4">
+                      <div>
+                          <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Email</label>
+                          <div className="relative">
+                              <User className="absolute left-3 top-2.5 text-slate-500 w-5 h-5" />
+                              <input 
+                                type="email" 
+                                value={authEmail}
+                                onChange={e => setAuthEmail(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-700 rounded pl-10 pr-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                                placeholder="name@example.com"
+                                required
+                              />
+                          </div>
+                      </div>
+                      <div>
+                          <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Password</label>
+                          <div className="relative">
+                              <Key className="absolute left-3 top-2.5 text-slate-500 w-5 h-5" />
+                              <input 
+                                type="password" 
+                                value={authPass}
+                                onChange={e => setAuthPass(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-700 rounded pl-10 pr-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                                placeholder="••••••••"
+                                required
+                              />
+                          </div>
+                      </div>
+                      <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded mt-6 transition-colors shadow-lg">
+                          Accedi
+                      </button>
+                  </form>
+                  <p className="text-center mt-6 text-xs text-slate-600">
+                      Default: arch.luigiresta@gmail.com / admin123
+                  </p>
+              </div>
+          </div>
+      )
   }
 
+  // --- HELPERS RENDER ---
+
+  const renderSettings = () => (
+      <div className="max-w-2xl mx-auto p-8 h-full overflow-y-auto">
+          <div className="bg-slate-800 rounded-xl border border-slate-700 shadow-xl overflow-hidden">
+              <div className="p-6 border-b border-slate-700 bg-slate-900/50 flex items-center gap-3">
+                  <Settings className="w-6 h-6 text-indigo-400" />
+                  <h2 className="text-xl font-bold text-white">Impostazioni Applicazione</h2>
+              </div>
+              <div className="p-6 space-y-8">
+                  {/* Credenziali */}
+                  <div className="space-y-4">
+                      <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-2">
+                          <Lock className="w-4 h-4"/> Credenziali di Accesso
+                      </h3>
+                      <div className="grid grid-cols-1 gap-4">
+                          <div>
+                              <label className="block text-xs text-slate-400 mb-1">Email Amministratore</label>
+                              <input 
+                                type="email" 
+                                value={storedEmail} 
+                                onChange={e => setStoredEmail(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-600 rounded px-4 py-2 text-white"
+                              />
+                          </div>
+                          <div>
+                              <label className="block text-xs text-slate-400 mb-1">Password Amministratore</label>
+                              <input 
+                                type="text" 
+                                value={storedPass} 
+                                onChange={e => setStoredPass(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-600 rounded px-4 py-2 text-white font-mono"
+                              />
+                          </div>
+                      </div>
+                  </div>
+
+                  <hr className="border-slate-700" />
+
+                  {/* API Key */}
+                  <div className="space-y-4">
+                      <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                          <Zap className="w-4 h-4"/> Configurazione AI Gemini
+                      </h3>
+                      <div>
+                          <label className="block text-xs text-slate-400 mb-1">Google Gemini API Key</label>
+                          <div className="flex gap-2">
+                            <input 
+                                type="password" 
+                                value={storedApiKey} 
+                                onChange={e => setStoredApiKey(e.target.value)}
+                                placeholder="Incolla la tua chiave API qui..."
+                                className="flex-1 bg-slate-900 border border-slate-600 rounded px-4 py-2 text-white font-mono"
+                            />
+                            {/* Visual check if key exists */}
+                            {storedApiKey && <CheckCircle2 className="text-emerald-500 w-8 h-8"/>}
+                          </div>
+                          <p className="text-xs text-slate-500 mt-2">
+                              La chiave verrà salvata localmente nel browser. Necessaria per analisi e importazione dati.
+                          </p>
+                      </div>
+                  </div>
+              </div>
+              <div className="p-6 border-t border-slate-700 bg-slate-900 flex justify-end">
+                  <button 
+                    onClick={handleSaveSettings}
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded font-bold transition-colors"
+                  >
+                      <Save className="w-4 h-4" /> Salva Modifiche
+                  </button>
+              </div>
+          </div>
+      </div>
+  );
+
   const renderDeviceList = () => (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left border-collapse">
+    <div className="overflow-x-auto h-full p-4">
+      <table className="w-full text-left border-collapse min-w-[800px]">
         <thead>
-          <tr className="bg-slate-800 text-slate-400 text-xs uppercase tracking-wider">
-            <th className="p-4 border-b border-slate-700">Tipo</th>
-            <th className="p-4 border-b border-slate-700">Nome</th>
-            <th className="p-4 border-b border-slate-700">Indirizzo IP</th>
-            <th className="p-4 border-b border-slate-700">Indirizzo MAC</th>
-            <th className="p-4 border-b border-slate-700">Produttore</th>
-            <th className="p-4 border-b border-slate-700">Stato</th>
+          <tr className="bg-slate-800 text-slate-400 text-xs uppercase tracking-wider sticky top-0 z-10">
+            <th className="p-4 border-b border-slate-700 bg-slate-800">Tipo</th>
+            <th className="p-4 border-b border-slate-700 bg-slate-800">Nome</th>
+            <th className="p-4 border-b border-slate-700 bg-slate-800">Indirizzo IP</th>
+            <th className="p-4 border-b border-slate-700 bg-slate-800">Indirizzo MAC</th>
+            <th className="p-4 border-b border-slate-700 bg-slate-800">Produttore</th>
+            <th className="p-4 border-b border-slate-700 bg-slate-800">Stato</th>
           </tr>
         </thead>
         <tbody className="text-sm">
@@ -282,23 +437,19 @@ const App: React.FC = () => {
   );
 
   const renderWanTrace = () => (
-      <div className="flex flex-col h-full gap-6 p-4">
-          <div className="bg-slate-800 p-6 rounded-lg shadow-md border border-slate-700">
+      <div className="flex flex-col h-full gap-6 p-4 overflow-hidden">
+          <div className="bg-slate-800 p-6 rounded-lg shadow-md border border-slate-700 shrink-0">
               <h2 className="text-xl font-bold text-slate-200 mb-2 flex items-center gap-2">
                   <Globe className="w-5 h-5 text-indigo-400" />
                   Tracciamento Percorso WAN (Internet)
               </h2>
-              <p className="text-slate-400 text-sm mb-4">
-                  Questa funzione simula un <code>traceroute</code> dal tuo Gateway verso una destinazione esterna su Internet.
-                  Non inserire un dispositivo locale. Inserisci un sito web o un IP pubblico.
-              </p>
-              <div className="flex gap-4 mb-4">
+              <div className="flex gap-4 mb-4 mt-4">
                   <input 
                     type="text" 
                     value={wanTarget}
                     onChange={(e) => setWanTarget(e.target.value)}
                     className="flex-1 bg-slate-900 border border-slate-700 rounded px-4 py-2 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                    placeholder="Destinazione Esterna (es. google.it, 1.1.1.1)"
+                    placeholder="Destinazione Esterna (es. google.it)"
                   />
                   <button 
                     onClick={handleTraceWan}
@@ -309,15 +460,15 @@ const App: React.FC = () => {
                   </button>
               </div>
           </div>
-          <div className="flex-1 overflow-auto bg-slate-800 rounded-lg border border-slate-700 p-6 relative">
+          <div className="flex-1 overflow-auto bg-slate-800 rounded-lg border border-slate-700 p-6 relative min-h-0">
               {wanHops.length === 0 && !isTracing && !errorMsg && (
                   <div className="text-center text-slate-500 mt-20">
-                      Inserisci una destinazione internet (es. <code>google.com</code>) per visualizzare il percorso attraverso i provider.
+                      Inserisci una destinazione internet.
                   </div>
               )}
               <div className="relative">
                   {wanHops.map((hop, index) => (
-                      <div key={index} className="flex group mb-8 last:mb-0 relative z-10 animate-fade-in" style={{ animationDelay: `${index * 150}ms` }}>
+                      <div key={index} className="flex group mb-8 last:mb-0 relative z-10">
                           {index !== wanHops.length - 1 && (
                               <div className="absolute left-6 top-10 bottom-0 w-0.5 bg-indigo-900 group-hover:bg-indigo-600 transition-colors h-12"></div>
                           )}
@@ -347,24 +498,14 @@ const App: React.FC = () => {
       <div className="h-full overflow-y-auto p-4 max-w-4xl mx-auto">
           <div className="bg-slate-800 p-8 rounded-xl border border-slate-700 shadow-2xl">
               <div className="flex items-center gap-3 mb-6 border-b border-slate-700 pb-4">
-                  <div className="bg-indigo-500/20 p-3 rounded-lg">
-                      <FileText className="w-8 h-8 text-indigo-400" />
-                  </div>
-                  <div>
-                      <h2 className="text-2xl font-bold text-slate-100">Analisi Approfondita della Rete</h2>
-                      <p className="text-slate-400 text-sm">Report generato dall'Intelligenza Artificiale</p>
-                  </div>
+                  <FileText className="w-8 h-8 text-indigo-400" />
+                  <h2 className="text-2xl font-bold text-slate-100">Analisi Approfondita della Rete</h2>
               </div>
               
-              {devices.length === 0 ? (
-                  <div className="text-center py-10 text-slate-500">
-                      Nessun dispositivo rilevato. Effettua prima una scansione o importa i dati.
-                  </div>
-              ) : !aiAnalysis ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-slate-400">
-                      <RefreshCw className="w-10 h-10 animate-spin mb-4 text-indigo-500" />
-                      <p>L'IA sta analizzando la configurazione della tua rete...</p>
-                  </div>
+              {!aiAnalysis ? (
+                   <div className="text-center py-10 text-slate-500">
+                      {devices.length === 0 ? "Nessun dispositivo." : "Analisi in corso..."}
+                   </div>
               ) : (
                   <div className="bg-slate-900/50 p-6 rounded-lg border border-slate-700/50">
                       <MarkdownViewer text={aiAnalysis} />
@@ -375,44 +516,39 @@ const App: React.FC = () => {
   );
 
   const renderOptimization = () => (
-      <div className="h-full flex flex-col p-4 gap-4">
+      <div className="h-full flex flex-col p-4 gap-4 overflow-hidden">
           {!optimizationResult ? (
               <div className="flex-1 flex flex-col items-center justify-center bg-slate-800 rounded-xl border border-slate-700 p-8 text-center">
                   <Zap className="w-16 h-16 text-yellow-400 mb-6" />
-                  <h2 className="text-2xl font-bold text-slate-100 mb-2">Ottimizzazione Smart della Topologia</h2>
+                  <h2 className="text-2xl font-bold text-slate-100 mb-2">Ottimizzazione Smart</h2>
                   <p className="text-slate-400 max-w-lg mb-8">
-                      L'IA analizzerà la tua lista di dispositivi attuale e proporrà una nuova architettura di rete (TO-BE) più sicura e performante, suggerendo segmentazioni e riorganizzazioni logiche.
+                      L'IA analizzerà la tua lista di dispositivi e proporrà una nuova architettura.
                   </p>
-                  {devices.length === 0 ? (
-                      <p className="text-red-400">Devi prima importare o scansionare una rete.</p>
-                  ) : (
+                  {devices.length > 0 && (
                       <button 
                           onClick={handleOptimize}
                           disabled={isOptimizing}
-                          className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-bold text-lg flex items-center gap-2 shadow-lg hover:shadow-indigo-500/25 transition-all transform hover:scale-105"
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-bold text-lg flex items-center gap-2 shadow-lg"
                       >
                           {isOptimizing ? <RefreshCw className="animate-spin" /> : <Zap className="fill-current" />}
-                          {isOptimizing ? 'Generazione Proposta...' : 'Genera Configurazione Ideale'}
+                          Genera Configurazione Ideale
                       </button>
                   )}
               </div>
           ) : (
-              <div className="flex-1 flex gap-4 overflow-hidden">
-                  {/* Left: Diagram */}
+              <div className="flex-1 flex gap-4 overflow-hidden min-h-0">
                   <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
-                      <div className="p-4 border-b border-slate-700 bg-slate-900/50 flex justify-between items-center">
+                      <div className="p-4 border-b border-slate-700 bg-slate-900/50 flex justify-between items-center shrink-0">
                           <h3 className="font-bold text-emerald-400 flex items-center gap-2">
-                              <CheckCircle2 size={18}/> Topologia Proposta (TO-BE)
+                              <CheckCircle2 size={18}/> Topologia Proposta
                           </h3>
                           <button onClick={() => setOptimizationResult(null)} className="text-xs text-slate-500 hover:text-white underline">Reset</button>
                       </div>
-                      <div className="flex-1 relative">
+                      <div className="flex-1 relative min-h-0">
                           <TopologyMap devices={optimizationResult.optimizedTopology} onContextMenu={() => {}} />
                       </div>
                   </div>
-                  
-                  {/* Right: Explanation */}
-                  <div className="w-1/3 bg-slate-800 rounded-xl border border-slate-700 overflow-y-auto p-6">
+                  <div className="w-1/3 bg-slate-800 rounded-xl border border-slate-700 overflow-y-auto p-6 shrink-0">
                       <h3 className="font-bold text-xl text-slate-100 mb-4 flex items-center gap-2">
                           <FileText className="text-indigo-400"/> Dettagli Intervento
                       </h3>
@@ -423,43 +559,14 @@ const App: React.FC = () => {
       </div>
   );
 
-  // --- Auth Render ---
-  if (!hasApiKey) {
-     return (
-        <div className="flex h-screen bg-slate-900 text-slate-100 items-center justify-center p-4">
-            <div className="max-w-md w-full bg-slate-800 p-8 rounded-xl shadow-2xl border border-slate-700 text-center animate-fade-in">
-                <div className="bg-indigo-500/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <Network className="w-8 h-8 text-indigo-500" />
-                </div>
-                <h1 className="text-2xl font-bold mb-2">NetVisio</h1>
-                <p className="text-slate-400 mb-8">
-                    Per utilizzare le funzionalità di analisi di rete e tracciamento, è necessaria una API Key valida.
-                </p>
-                <button 
-                    onClick={requestApiKey}
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-lg transition-all transform hover:scale-105 flex items-center justify-center gap-2"
-                >
-                    <Key className="w-5 h-5" />
-                    Inserisci API Key
-                </button>
-                <p className="mt-4 text-xs text-slate-500">
-                    <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">
-                        Informazioni sui costi
-                    </a>
-                </p>
-            </div>
-        </div>
-     );
-  }
-
-  // --- Main Render ---
+  // --- MAIN APP LAYOUT ---
   return (
     <div 
-        className="flex h-screen bg-slate-900 text-slate-100"
+        className="flex h-screen bg-slate-900 text-slate-100 overflow-hidden"
         onClick={closeMenu} 
     >
       {/* Sidebar */}
-      <aside className="w-64 bg-slate-950 border-r border-slate-800 flex flex-col">
+      <aside className="w-64 bg-slate-950 border-r border-slate-800 flex flex-col shrink-0">
         <div className="p-6 border-b border-slate-800">
             <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-500 to-purple-500 bg-clip-text text-transparent">
                 NetVisio
@@ -467,45 +574,18 @@ const App: React.FC = () => {
             <p className="text-xs text-slate-500 mt-1">Gestore Topologia di Rete</p>
         </div>
 
-        <nav className="flex-1 p-4 space-y-2">
+        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
             <div className="text-xs font-bold text-slate-500 uppercase px-4 mb-2 mt-2">Monitoraggio</div>
-            <button 
-                onClick={() => setViewMode('map')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'map' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
-            >
-                <Network size={18} />
-                <span>Mappa Topologia</span>
-            </button>
-            <button 
-                onClick={() => setViewMode('list')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'list' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
-            >
-                <LayoutDashboard size={18} />
-                <span>Lista Dispositivi</span>
-            </button>
-            <button 
-                onClick={() => setViewMode('wan')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'wan' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
-            >
-                <Globe size={18} />
-                <span>Tracciamento WAN</span>
-            </button>
+            <button onClick={() => setViewMode('map')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'map' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900'}`}><Network size={18} /><span>Mappa Topologia</span></button>
+            <button onClick={() => setViewMode('list')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'list' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900'}`}><LayoutDashboard size={18} /><span>Lista Dispositivi</span></button>
+            <button onClick={() => setViewMode('wan')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'wan' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900'}`}><Globe size={18} /><span>Tracciamento WAN</span></button>
 
             <div className="text-xs font-bold text-slate-500 uppercase px-4 mb-2 mt-6">Intelligenza Artificiale</div>
-            <button 
-                onClick={() => setViewMode('analysis')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'analysis' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
-            >
-                <FileText size={18} />
-                <span>Analisi Approfondita</span>
-            </button>
-            <button 
-                onClick={() => setViewMode('optimize')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'optimize' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
-            >
-                <Zap size={18} />
-                <span>Ottimizzazione Smart</span>
-            </button>
+            <button onClick={() => setViewMode('analysis')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'analysis' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900'}`}><FileText size={18} /><span>Analisi Approfondita</span></button>
+            <button onClick={() => setViewMode('optimize')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'optimize' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900'}`}><Zap size={18} /><span>Ottimizzazione Smart</span></button>
+            
+            <div className="text-xs font-bold text-slate-500 uppercase px-4 mb-2 mt-6">Sistema</div>
+            <button onClick={() => setViewMode('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'settings' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900'}`}><Settings size={18} /><span>Impostazioni</span></button>
         </nav>
 
         <div className="p-4 border-t border-slate-800 space-y-2">
@@ -516,64 +596,67 @@ const App: React.FC = () => {
                  <Upload size={16} />
                  Scansione Rete
              </button>
+             <button 
+                onClick={handleLogout}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 hover:bg-red-900/50 text-slate-400 hover:text-red-400 rounded-md transition-colors mt-2 text-xs"
+             >
+                 <LogOut size={14} /> Logout
+             </button>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/50 backdrop-blur">
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden h-full">
+        <header className="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/50 backdrop-blur shrink-0">
             <h2 className="text-lg font-semibold text-slate-200 capitalize flex items-center gap-2">
                 {viewMode === 'map' && <Network className="text-indigo-400"/>}
                 {viewMode === 'list' && <LayoutDashboard className="text-indigo-400"/>}
                 {viewMode === 'wan' && <Globe className="text-indigo-400"/>}
                 {viewMode === 'analysis' && <FileText className="text-indigo-400"/>}
                 {viewMode === 'optimize' && <Zap className="text-yellow-400"/>}
+                {viewMode === 'settings' && <Settings className="text-slate-400"/>}
                 
-                {viewMode === 'map' ? 'Albero Topologia' : 
+                {viewMode === 'map' ? 'Topologia (Visualizzazione a Schede)' : 
                  viewMode === 'list' ? 'Inventario' : 
                  viewMode === 'wan' ? 'Analisi Rotta Internet' :
-                 viewMode === 'analysis' ? 'Report Sicurezza AI' : 'Proposta Ottimizzazione'}
+                 viewMode === 'analysis' ? 'Report Sicurezza AI' : 
+                 viewMode === 'optimize' ? 'Proposta Ottimizzazione' : 'Impostazioni'}
             </h2>
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700">
                     <div className={`w-2 h-2 rounded-full ${errorMsg ? 'bg-red-500' : 'bg-emerald-500 animate-pulse'}`}></div>
                     <span className="text-xs text-slate-300">{errorMsg ? 'Attenzione' : 'Sistema Online'}</span>
                 </div>
-                <button className="p-2 text-slate-400 hover:text-white transition-colors" onClick={() => requestApiKey()}>
-                    <Settings size={20} />
-                </button>
             </div>
         </header>
 
         {errorMsg && (
-            <div className="bg-red-900/50 border-l-4 border-red-500 p-4 m-4 flex items-center gap-3 text-red-200 animate-fade-in">
+            <div className="bg-red-900/50 border-l-4 border-red-500 p-4 m-4 flex items-center gap-3 text-red-200 animate-fade-in shrink-0">
                 <AlertTriangle className="text-red-400" />
                 <span>{errorMsg}</span>
             </div>
         )}
 
+        {/* Content Area */}
         <div className="flex-1 overflow-hidden relative p-0 bg-slate-900">
             {viewMode === 'map' && (
-                <div className="w-full h-full p-4">
+                <div className="w-full h-full p-4 overflow-hidden">
                     <TopologyMap devices={devices} onContextMenu={handleContextMenu} />
                 </div>
             )}
             
-            {viewMode === 'list' && <div className="p-4">{renderDeviceList()}</div>}
-            
+            {viewMode === 'list' && renderDeviceList()}
             {viewMode === 'wan' && renderWanTrace()}
-            
             {viewMode === 'analysis' && renderAnalysis()}
-
             {viewMode === 'optimize' && renderOptimization()}
+            {viewMode === 'settings' && renderSettings()}
         </div>
       </main>
 
-      {/* SCAN WIZARD */}
+      {/* Modals & Menus (Same as before) */}
       {showScanWizard && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
               <div className="bg-slate-900 w-full max-w-3xl rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                  {/* Header */}
                   <div className="p-6 border-b border-slate-800 flex justify-between items-start bg-slate-900">
                       <div>
                           <h3 className="text-xl font-bold text-white flex items-center gap-2">
@@ -585,85 +668,45 @@ const App: React.FC = () => {
                           <X size={24} />
                       </button>
                   </div>
-
-                  {/* Body */}
                   <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                      
-                      {/* Why Box */}
                       <div className="bg-yellow-900/10 border border-yellow-700/30 rounded-lg p-4 flex gap-4">
                           <ShieldAlert className="w-10 h-10 text-yellow-500 shrink-0" />
                           <div>
                               <h4 className="font-bold text-yellow-500 text-sm uppercase mb-1">Perché è richiesto questo passaggio?</h4>
                               <p className="text-sm text-yellow-200/80 leading-relaxed">
-                                  Per motivi di sicurezza, i browser web operano in una "Sandbox" e non possono vedere direttamente i dispositivi collegati al tuo Wi-Fi/LAN. 
-                                  Solo tu, come utente, puoi autorizzare questa operazione eseguendo un comando di sistema sicuro.
+                                  Sandbox Browser: per motivi di sicurezza dobbiamo incollare manualmente l'output di <code>arp -a</code>.
                               </p>
                           </div>
                       </div>
-
-                      {/* Step 1: Command */}
                       <div className={`transition-opacity duration-300 ${wizardStep === 1 ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
                           <div className="flex items-center gap-3 mb-3">
                               <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">1</span>
-                              <h4 className="text-slate-200 font-medium">Esegui il comando di scansione</h4>
-                          </div>
-                          <div className="bg-slate-950 rounded border border-slate-800 p-4 font-mono text-sm relative group">
-                              <div className="text-slate-500 mb-2 text-xs">// Windows (Prompt dei comandi)</div>
-                              <code className="text-green-400 block mb-3">arp -a</code>
-                              <div className="text-slate-500 mb-2 text-xs">// macOS / Linux (Terminale)</div>
-                              <code className="text-green-400 block">arp -a</code>
-                              
-                              <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <span className="text-xs text-slate-500">Copia comando ed esegui</span>
-                              </div>
+                              <h4 className="text-slate-200 font-medium">Esegui comando: <code className="text-green-400 mx-2">arp -a</code></h4>
                           </div>
                       </div>
-
-                      {/* Step 2: Paste */}
                       <div className={`transition-opacity duration-300 ${wizardStep === 1 ? 'opacity-50' : 'opacity-100'}`}>
                           <div className="flex items-center gap-3 mb-3">
                               <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">2</span>
-                              <h4 className="text-slate-200 font-medium">Incolla il risultato qui sotto</h4>
+                              <h4 className="text-slate-200 font-medium">Incolla qui:</h4>
                           </div>
                           <textarea
                             className="w-full h-32 bg-slate-950 border border-slate-700 rounded p-4 font-mono text-sm text-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none resize-none placeholder:text-slate-600"
-                            placeholder="Esempio: 
-192.168.1.1    00-11-22-33-44-55   dinamico
-192.168.1.15   aa-bb-cc-dd-ee-ff   statico ..."
+                            placeholder="Output arp -a..."
                             value={importText}
                             onChange={(e) => {
                                 setImportText(e.target.value);
-                                if(e.target.value.length > 10) setWizardStep(2);
+                                if(e.target.value.length > 5) setWizardStep(2);
                             }}
                             onClick={() => setWizardStep(2)}
                           ></textarea>
                       </div>
-
                   </div>
-
-                  {/* Footer */}
                   <div className="p-6 border-t border-slate-800 bg-slate-900 flex justify-between items-center">
-                       <button 
-                        onClick={handleScanNetwork}
-                        className="text-slate-400 hover:text-white text-sm underline decoration-dotted"
-                      >
-                          Non posso eseguire comandi? Usa dati Demo
-                      </button>
-
+                       <button onClick={handleScanNetwork} className="text-slate-400 hover:text-white text-sm underline decoration-dotted">Usa dati Demo</button>
                       <div className="flex gap-3">
-                        <button 
-                            onClick={() => setShowScanWizard(false)}
-                            className="px-4 py-2 rounded text-slate-300 hover:bg-slate-800 transition-colors"
-                        >
-                            Chiudi
-                        </button>
-                        <button 
-                            onClick={handleImportRealData}
-                            disabled={!importText.trim() || isLoading}
-                            className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-indigo-500/20"
-                        >
-                            {isLoading ? <RefreshCw className="animate-spin w-4 h-4"/> : <CheckCircle2 className="w-4 h-4" />}
-                            Analizza Rete
+                        <button onClick={() => setShowScanWizard(false)} className="px-4 py-2 rounded text-slate-300 hover:bg-slate-800">Chiudi</button>
+                        <button onClick={handleImportRealData} disabled={!importText.trim() || isLoading} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium flex items-center gap-2 disabled:opacity-50">
+                            {isLoading ? <RefreshCw className="animate-spin w-4 h-4"/> : <CheckCircle2 className="w-4 h-4" />} Analizza
                         </button>
                       </div>
                   </div>
@@ -671,7 +714,6 @@ const App: React.FC = () => {
           </div>
       )}
 
-      {/* Context Menu Portal */}
       <ContextMenu 
         position={menuPos} 
         device={selectedDeviceId ? devices.find(d => d.id === selectedDeviceId) : undefined} 

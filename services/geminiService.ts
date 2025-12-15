@@ -30,20 +30,27 @@ const cleanJson = (text: string): string => {
  * Esegue una operazione asincrona con tentativi di retry automatici
  * in caso di errori "Model Overloaded" (503) o "Too Many Requests" (429).
  */
-const retryWithBackoff = async <T>(operation: () => Promise<T>, retries = 3, delay = 2000): Promise<T> => {
+const retryWithBackoff = async <T>(operation: () => Promise<T>, retries = 5, delay = 2000): Promise<T> => {
   try {
     return await operation();
   } catch (error: any) {
-    // Controlla codici di errore comuni per sovraccarico o problemi transitori
-    const errorCode = error?.code || error?.status;
-    const isTransientError = errorCode === 503 || errorCode === 429 || 
-                             (error?.message && error.message.includes('overloaded'));
+    // Parsing robusto dell'errore (può essere annidato in error.error o error.response)
+    const errorCode = error?.code || error?.status || error?.error?.code || error?.error?.status;
+    const errorMessage = error?.message || error?.error?.message || JSON.stringify(error);
+
+    // Identifica errori transitori o di quota
+    const isTransientError = 
+        errorCode === 503 || 
+        errorCode === 429 || 
+        errorMessage.includes('overloaded') || 
+        errorMessage.includes('quota') ||
+        errorMessage.includes('RESOURCE_EXHAUSTED');
 
     if (retries > 0 && isTransientError) {
       console.warn(`Gemini API Busy/Overloaded (${errorCode}). Retrying in ${delay}ms... (${retries} attempts left)`);
       // Attesa (backoff)
       await new Promise(resolve => setTimeout(resolve, delay));
-      // Riprova con delay raddoppiato
+      // Riprova con delay raddoppiato (backoff esponenziale)
       return retryWithBackoff(operation, retries - 1, delay * 2);
     }
     
