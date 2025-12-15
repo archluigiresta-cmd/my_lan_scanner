@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
-import { NetworkDevice, DeviceType, WanHop } from "../types";
+import { NetworkDevice, DeviceType, WanHop, OptimizationResult } from "../types";
 
 // Variabile per memorizzare la chiave temporanea di sessione
 let sessionApiKey: string | null = null;
@@ -212,9 +212,15 @@ export const analyzeNetwork = async (devices: NetworkDevice[]): Promise<string> 
     const ai = getAiClient();
     
     const prompt = `
-      Analizza la seguente topologia di rete (lista JSON di dispositivi).
-      Identifica potenziali colli di bottiglia, rischi di sicurezza (es. dispositivi sconosciuti), o suggerimenti per miglioramenti.
-      La risposta deve essere in formato Markdown, concisa, professionale e rigorosamente in lingua ITALIANA.
+      Sei un esperto Senior Network Engineer.
+      Analizza la seguente lista di dispositivi di rete.
+      Fornisci un report dettagliato in Markdown e IN ITALIANO.
+      
+      Struttura del report:
+      1. **Riepilogo Esecutivo**: Stato generale della rete.
+      2. **Inventario e Classificazione**: Breve commento sui tipi di device rilevati.
+      3. **Analisi di Sicurezza**: Potenziali rischi basati sui produttori, mancanza di segmentazione apparente, device sconosciuti.
+      4. **Suggerimenti Immediati**: Azioni rapide da intraprendere.
       
       Dati Rete:
       ${JSON.stringify(devices.map(d => ({ ip: d.ip, type: d.type, name: d.name, manufacturer: d.manufacturer })))}
@@ -230,3 +236,76 @@ export const analyzeNetwork = async (devices: NetworkDevice[]): Promise<string> 
     throw error;
   }
 };
+
+export const optimizeNetworkTopology = async (currentDevices: NetworkDevice[]): Promise<OptimizationResult> => {
+    try {
+        const ai = getAiClient();
+        
+        const prompt = `
+          Sei un Architetto di Rete esperto.
+          Ti fornisco una lista di dispositivi attuali (Topologia AS-IS).
+          Il tuo compito è progettare una Topologia TO-BE ottimizzata (più sicura e performante).
+          
+          Azioni richieste:
+          1. **Riorganizza la topologia**: Inserisci, se necessario, Switch virtuali o logici per segmentare (es. Switch IoT, Switch Ufficio).
+          2. **Rinomina i dispositivi** in modo più professionale se hanno nomi generici.
+          3. **Mantieni gli stessi device fisici** (PC, Stampanti) ma collegali meglio (cambia parentId).
+          4. **Spiega le modifiche**: Perché hai spostato quel device? Perché hai aggiunto quello switch?
+    
+          Output JSON richiesto:
+          {
+             "explanation": "Testo dettagliato in markdown e in Italiano che spiega punto per punto la nuova architettura proposta.",
+             "optimizedTopology": [ ... lista array dei device ottimizzati ... ]
+          }
+          
+          Usa lo schema Type per garantire la struttura.
+          
+          Input (AS-IS):
+          ${JSON.stringify(currentDevices.map(d => ({ id: d.id, ip: d.ip, name: d.name, type: d.type, manufacturer: d.manufacturer })))}
+        `;
+    
+        const response = await retryWithBackoff<GenerateContentResponse>(() => ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                explanation: { type: Type.STRING },
+                optimizedTopology: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      id: { type: Type.STRING },
+                      ip: { type: Type.STRING },
+                      mac: { type: Type.STRING },
+                      name: { type: Type.STRING },
+                      manufacturer: { type: Type.STRING },
+                      type: { type: Type.STRING, enum: Object.values(DeviceType) },
+                      parentId: { type: Type.STRING, nullable: true },
+                      status: { type: Type.STRING, enum: ['online', 'offline', 'warning'] },
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }));
+    
+        const text = response.text;
+        if (!text) throw new Error("Risposta vuota dall'IA");
+        const result = JSON.parse(cleanJson(text));
+        
+        // Ensure properties exist
+        return {
+            explanation: result.explanation || "Nessuna spiegazione fornita.",
+            optimizedTopology: result.optimizedTopology || []
+        } as OptimizationResult;
+
+      } catch (error) {
+        console.error("Errore ottimizzazione rete:", error);
+        throw error;
+      }
+}

@@ -34,3 +34,8 @@ export interface ContextMenuPosition {
   y: number;
   deviceId: string;
 }
+
+export interface OptimizationResult {
+  explanation: string;
+  optimizedTopology: NetworkDevice[];
+}

@@ -3,11 +3,12 @@ import {
   NetworkDevice, 
   DeviceType, 
   ContextMenuPosition, 
-  WanHop 
+  WanHop,
+  OptimizationResult
 } from './types';
 import TopologyMap from './components/TopologyMap';
 import ContextMenu from './components/ContextMenu';
-import { generateSampleNetwork, analyzeNetwork, traceWanPath, setSessionApiKey, parseImportedData } from './services/geminiService';
+import { generateSampleNetwork, analyzeNetwork, traceWanPath, setSessionApiKey, parseImportedData, optimizeNetworkTopology } from './services/geminiService';
 import { 
   LayoutDashboard, 
   Network, 
@@ -25,10 +26,12 @@ import {
   X,
   Terminal,
   ShieldAlert,
-  HelpCircle,
-  Copy,
-  CheckCircle2
+  CheckCircle2,
+  FileText,
+  Zap,
+  ArrowRight
 } from 'lucide-react';
+import ReactMarkdown from 'react'; // Note: In a real env, import ReactMarkdown from 'react-markdown'. Here we will just render raw text or simple mapping for simplicity.
 
 // --- Icons Helper ---
 const getDeviceIcon = (type: DeviceType) => {
@@ -48,11 +51,15 @@ const App: React.FC = () => {
 
   // App State
   const [devices, setDevices] = useState<NetworkDevice[]>([]);
-  const [viewMode, setViewMode] = useState<'list' | 'map' | 'wan'>('map');
+  const [viewMode, setViewMode] = useState<'list' | 'map' | 'wan' | 'analysis' | 'optimize'>('map');
   const [isLoading, setIsLoading] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
+  // Optimization State
+  const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null);
+  const [isOptimizing, setIsOptimizing] = useState(false);
+
   // Import Modal State (Now Scan Wizard)
   const [showScanWizard, setShowScanWizard] = useState(false);
   const [importText, setImportText] = useState('');
@@ -104,16 +111,17 @@ const App: React.FC = () => {
   const handleScanNetwork = async () => {
     setIsLoading(true);
     setAiAnalysis('');
+    setOptimizationResult(null);
     setErrorMsg(null);
-    setShowScanWizard(false); // Close wizard if open
+    setShowScanWizard(false); 
     try {
         const data = await generateSampleNetwork();
         if (data.length === 0) {
            setErrorMsg("Nessun dispositivo rilevato. Riprova.");
         } else {
            setDevices(data);
-           const analysis = await analyzeNetwork(data);
-           setAiAnalysis(analysis);
+           // Non blocchiamo l'UI per l'analisi, la facciamo in background
+           analyzeNetwork(data).then(setAiAnalysis).catch(console.error);
         }
     } catch (e: any) {
         console.error("Scansione fallita", e);
@@ -128,6 +136,7 @@ const App: React.FC = () => {
       
       setIsLoading(true);
       setErrorMsg(null);
+      setOptimizationResult(null);
       setShowScanWizard(false);
       
       try {
@@ -136,8 +145,8 @@ const App: React.FC = () => {
               setErrorMsg("Non sono riuscito a trovare dispositivi nel testo fornito. Assicurati di copiare l'intero output.");
           } else {
               setDevices(data);
-              const analysis = await analyzeNetwork(data);
-              setAiAnalysis(analysis);
+              // Background analysis
+              analyzeNetwork(data).then(setAiAnalysis).catch(console.error);
               setViewMode('map');
           }
       } catch (e: any) {
@@ -148,6 +157,20 @@ const App: React.FC = () => {
           setImportText('');
           setWizardStep(1);
       }
+  };
+
+  const handleOptimize = async () => {
+    if (devices.length === 0) return;
+    setIsOptimizing(true);
+    setErrorMsg(null);
+    try {
+        const result = await optimizeNetworkTopology(devices);
+        setOptimizationResult(result);
+    } catch (e: any) {
+        setErrorMsg("Errore durante l'ottimizzazione: " + e.message);
+    } finally {
+        setIsOptimizing(false);
+    }
   };
 
   // On Load - Open Wizard immediately if authenticated
@@ -199,6 +222,20 @@ const App: React.FC = () => {
 
   // --- Render Helpers ---
 
+  // Simple Markdown renderer replacement since we can't easily add deps
+  const MarkdownViewer = ({ text }: { text: string }) => {
+    return (
+        <div className="prose prose-invert prose-sm max-w-none space-y-4">
+            {text.split('\n').map((line, i) => {
+                if (line.startsWith('###')) return <h3 key={i} className="text-lg font-bold text-indigo-300 mt-4">{line.replace('###', '')}</h3>
+                if (line.startsWith('**')) return <p key={i} className="font-bold text-slate-200">{line.replace(/\*\*/g, '')}</p>
+                if (line.startsWith('-')) return <li key={i} className="ml-4 text-slate-300">{line.replace('-', '')}</li>
+                return <p key={i} className="text-slate-300">{line}</p>
+            })}
+        </div>
+    )
+  }
+
   const renderDeviceList = () => (
     <div className="overflow-x-auto">
       <table className="w-full text-left border-collapse">
@@ -247,31 +284,35 @@ const App: React.FC = () => {
   const renderWanTrace = () => (
       <div className="flex flex-col h-full gap-6 p-4">
           <div className="bg-slate-800 p-6 rounded-lg shadow-md border border-slate-700">
-              <h2 className="text-xl font-bold text-slate-200 mb-4 flex items-center gap-2">
+              <h2 className="text-xl font-bold text-slate-200 mb-2 flex items-center gap-2">
                   <Globe className="w-5 h-5 text-indigo-400" />
-                  Tracciamento Percorso WAN
+                  Tracciamento Percorso WAN (Internet)
               </h2>
+              <p className="text-slate-400 text-sm mb-4">
+                  Questa funzione simula un <code>traceroute</code> dal tuo Gateway verso una destinazione esterna su Internet.
+                  Non inserire un dispositivo locale. Inserisci un sito web o un IP pubblico.
+              </p>
               <div className="flex gap-4 mb-4">
                   <input 
                     type="text" 
                     value={wanTarget}
                     onChange={(e) => setWanTarget(e.target.value)}
                     className="flex-1 bg-slate-900 border border-slate-700 rounded px-4 py-2 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                    placeholder="Inserisci Hostname o IP (es. google.com)"
+                    placeholder="Destinazione Esterna (es. google.it, 1.1.1.1)"
                   />
                   <button 
                     onClick={handleTraceWan}
                     disabled={isTracing}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded font-medium disabled:opacity-50 transition-colors"
                   >
-                      {isTracing ? 'Tracciamento...' : 'Traccia Rotta'}
+                      {isTracing ? 'Tracciamento...' : 'Traccia Percorso'}
                   </button>
               </div>
           </div>
           <div className="flex-1 overflow-auto bg-slate-800 rounded-lg border border-slate-700 p-6 relative">
               {wanHops.length === 0 && !isTracing && !errorMsg && (
                   <div className="text-center text-slate-500 mt-20">
-                      Inserisci una destinazione per visualizzare il percorso di rete.
+                      Inserisci una destinazione internet (es. <code>google.com</code>) per visualizzare il percorso attraverso i provider.
                   </div>
               )}
               <div className="relative">
@@ -299,6 +340,86 @@ const App: React.FC = () => {
                   ))}
               </div>
           </div>
+      </div>
+  );
+
+  const renderAnalysis = () => (
+      <div className="h-full overflow-y-auto p-4 max-w-4xl mx-auto">
+          <div className="bg-slate-800 p-8 rounded-xl border border-slate-700 shadow-2xl">
+              <div className="flex items-center gap-3 mb-6 border-b border-slate-700 pb-4">
+                  <div className="bg-indigo-500/20 p-3 rounded-lg">
+                      <FileText className="w-8 h-8 text-indigo-400" />
+                  </div>
+                  <div>
+                      <h2 className="text-2xl font-bold text-slate-100">Analisi Approfondita della Rete</h2>
+                      <p className="text-slate-400 text-sm">Report generato dall'Intelligenza Artificiale</p>
+                  </div>
+              </div>
+              
+              {devices.length === 0 ? (
+                  <div className="text-center py-10 text-slate-500">
+                      Nessun dispositivo rilevato. Effettua prima una scansione o importa i dati.
+                  </div>
+              ) : !aiAnalysis ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+                      <RefreshCw className="w-10 h-10 animate-spin mb-4 text-indigo-500" />
+                      <p>L'IA sta analizzando la configurazione della tua rete...</p>
+                  </div>
+              ) : (
+                  <div className="bg-slate-900/50 p-6 rounded-lg border border-slate-700/50">
+                      <MarkdownViewer text={aiAnalysis} />
+                  </div>
+              )}
+          </div>
+      </div>
+  );
+
+  const renderOptimization = () => (
+      <div className="h-full flex flex-col p-4 gap-4">
+          {!optimizationResult ? (
+              <div className="flex-1 flex flex-col items-center justify-center bg-slate-800 rounded-xl border border-slate-700 p-8 text-center">
+                  <Zap className="w-16 h-16 text-yellow-400 mb-6" />
+                  <h2 className="text-2xl font-bold text-slate-100 mb-2">Ottimizzazione Smart della Topologia</h2>
+                  <p className="text-slate-400 max-w-lg mb-8">
+                      L'IA analizzerà la tua lista di dispositivi attuale e proporrà una nuova architettura di rete (TO-BE) più sicura e performante, suggerendo segmentazioni e riorganizzazioni logiche.
+                  </p>
+                  {devices.length === 0 ? (
+                      <p className="text-red-400">Devi prima importare o scansionare una rete.</p>
+                  ) : (
+                      <button 
+                          onClick={handleOptimize}
+                          disabled={isOptimizing}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-bold text-lg flex items-center gap-2 shadow-lg hover:shadow-indigo-500/25 transition-all transform hover:scale-105"
+                      >
+                          {isOptimizing ? <RefreshCw className="animate-spin" /> : <Zap className="fill-current" />}
+                          {isOptimizing ? 'Generazione Proposta...' : 'Genera Configurazione Ideale'}
+                      </button>
+                  )}
+              </div>
+          ) : (
+              <div className="flex-1 flex gap-4 overflow-hidden">
+                  {/* Left: Diagram */}
+                  <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
+                      <div className="p-4 border-b border-slate-700 bg-slate-900/50 flex justify-between items-center">
+                          <h3 className="font-bold text-emerald-400 flex items-center gap-2">
+                              <CheckCircle2 size={18}/> Topologia Proposta (TO-BE)
+                          </h3>
+                          <button onClick={() => setOptimizationResult(null)} className="text-xs text-slate-500 hover:text-white underline">Reset</button>
+                      </div>
+                      <div className="flex-1 relative">
+                          <TopologyMap devices={optimizationResult.optimizedTopology} onContextMenu={() => {}} />
+                      </div>
+                  </div>
+                  
+                  {/* Right: Explanation */}
+                  <div className="w-1/3 bg-slate-800 rounded-xl border border-slate-700 overflow-y-auto p-6">
+                      <h3 className="font-bold text-xl text-slate-100 mb-4 flex items-center gap-2">
+                          <FileText className="text-indigo-400"/> Dettagli Intervento
+                      </h3>
+                      <MarkdownViewer text={optimizationResult.explanation} />
+                  </div>
+              </div>
+          )}
       </div>
   );
 
@@ -347,6 +468,7 @@ const App: React.FC = () => {
         </div>
 
         <nav className="flex-1 p-4 space-y-2">
+            <div className="text-xs font-bold text-slate-500 uppercase px-4 mb-2 mt-2">Monitoraggio</div>
             <button 
                 onClick={() => setViewMode('map')}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'map' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
@@ -368,6 +490,22 @@ const App: React.FC = () => {
                 <Globe size={18} />
                 <span>Tracciamento WAN</span>
             </button>
+
+            <div className="text-xs font-bold text-slate-500 uppercase px-4 mb-2 mt-6">Intelligenza Artificiale</div>
+            <button 
+                onClick={() => setViewMode('analysis')}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'analysis' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
+            >
+                <FileText size={18} />
+                <span>Analisi Approfondita</span>
+            </button>
+            <button 
+                onClick={() => setViewMode('optimize')}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${viewMode === 'optimize' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
+            >
+                <Zap size={18} />
+                <span>Ottimizzazione Smart</span>
+            </button>
         </nav>
 
         <div className="p-4 border-t border-slate-800 space-y-2">
@@ -384,8 +522,17 @@ const App: React.FC = () => {
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0">
         <header className="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/50 backdrop-blur">
-            <h2 className="text-lg font-semibold text-slate-200 capitalize">
-                {viewMode === 'map' ? 'Albero Topologia Rete' : viewMode === 'list' ? 'Inventario Dispositivi Attivi' : 'Analisi Percorso WAN'}
+            <h2 className="text-lg font-semibold text-slate-200 capitalize flex items-center gap-2">
+                {viewMode === 'map' && <Network className="text-indigo-400"/>}
+                {viewMode === 'list' && <LayoutDashboard className="text-indigo-400"/>}
+                {viewMode === 'wan' && <Globe className="text-indigo-400"/>}
+                {viewMode === 'analysis' && <FileText className="text-indigo-400"/>}
+                {viewMode === 'optimize' && <Zap className="text-yellow-400"/>}
+                
+                {viewMode === 'map' ? 'Albero Topologia' : 
+                 viewMode === 'list' ? 'Inventario' : 
+                 viewMode === 'wan' ? 'Analisi Rotta Internet' :
+                 viewMode === 'analysis' ? 'Report Sicurezza AI' : 'Proposta Ottimizzazione'}
             </h2>
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700">
@@ -405,26 +552,20 @@ const App: React.FC = () => {
             </div>
         )}
 
-        <div className="flex-1 overflow-hidden relative p-4">
+        <div className="flex-1 overflow-hidden relative p-0 bg-slate-900">
             {viewMode === 'map' && (
-                <div className="w-full h-full">
-                     {aiAnalysis && !errorMsg && (
-                        <div className="absolute bottom-6 right-6 z-20 w-80 max-h-60 overflow-y-auto bg-slate-800/90 backdrop-blur border border-indigo-500/30 p-4 rounded-lg shadow-2xl text-xs text-slate-300">
-                            <h4 className="font-bold text-indigo-400 mb-2 flex items-center gap-2">
-                                <Activity size={12} /> Analisi Rete AI
-                            </h4>
-                            <div className="prose prose-invert prose-xs">
-                                {aiAnalysis}
-                            </div>
-                        </div>
-                    )}
+                <div className="w-full h-full p-4">
                     <TopologyMap devices={devices} onContextMenu={handleContextMenu} />
                 </div>
             )}
             
-            {viewMode === 'list' && renderDeviceList()}
+            {viewMode === 'list' && <div className="p-4">{renderDeviceList()}</div>}
             
             {viewMode === 'wan' && renderWanTrace()}
+            
+            {viewMode === 'analysis' && renderAnalysis()}
+
+            {viewMode === 'optimize' && renderOptimization()}
         </div>
       </main>
 
