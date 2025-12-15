@@ -1,0 +1,5 @@
+{
+  "name": "NetVisio Gestore LAN/WAN",
+  "description": "Una dashboard completa per la gestione della rete che consente agli utenti di visualizzare la topologia della rete locale, gestire i dettagli dei dispositivi (IP, MAC, Produttore) e simulare il tracciamento WAN. Include visualizzazione ad albero e analisi di rete basata su IA.",
+  "requestFramePermissions": []
+}
